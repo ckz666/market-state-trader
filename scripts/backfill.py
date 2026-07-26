@@ -82,11 +82,15 @@ async def fetch_with_cache(client: ExchangeClient, symbol: str, tf: str,
 
     def progress(batches, last_ts):
         now = time.monotonic()
-        if now - last_print[0] >= 3:
-            got = batches * 1000
-            pct = min(100, got / expected * 100)
+        if now - last_print[0] >= 5:
+            # Time-based, not batch-count-based — batch size varies (Bitget's
+            # historical endpoint caps at 200/call, not the requested limit).
+            pct = min(100, (last_ts - since_ms) / max(1, until_ms - since_ms) * 100)
             when = datetime.fromtimestamp(last_ts / 1000, tz=timezone.utc)
-            print(f"    ...{tf}: ~{pct:4.1f}% ({batches} batches, up to {when})")
+            elapsed = now - t0
+            eta_s = elapsed / max(pct, 0.01) * (100 - pct)
+            print(f"    ...{tf}: ~{pct:4.1f}% ({batches} batches, up to {when}, "
+                  f"ETA ~{eta_s/60:.0f}min)")
             last_print[0] = now
 
     data = await client.fetch_ohlcv_range(symbol, tf, since_ms, until_ms, progress_cb=progress)
@@ -138,7 +142,15 @@ async def run(start_dt: datetime, end_dt: datetime, symbol: str, out_path: str,
     print(f"{out_path}: {len(logger.candidates)} existing candidates (will be skipped, not duplicated)")
 
     hours = pd.date_range(start_dt.replace(minute=0, second=0, microsecond=0), end_dt, freq="1h")
-    added, skipped_existing, skipped_gap = 0, 0, 0
+    # Indicators like ADX (window=14) crash outright on too-short input rather
+    # than returning NaN. Live never hits this (main.py always fetches a full
+    # window from an exchange with years of prior history) — but the very
+    # first hours after --start, if --start is at/near the true beginning of
+    # available exchange history, genuinely can't have a full lead-in yet.
+    # Matches the >30 threshold compiler.py already uses for its 4h guard.
+    MIN_BARS = 30
+
+    added, skipped_existing, skipped_gap, skipped_error = 0, 0, 0, 0
     t0 = time.monotonic()
 
     for state_ts in hours:
@@ -147,7 +159,7 @@ async def run(start_dt: datetime, end_dt: datetime, symbol: str, out_path: str,
             continue
 
         closed_1h = df_1h[df_1h.index + pd.Timedelta(hours=1) <= state_ts].tail(WINDOW["1h"])
-        if len(closed_1h) < 2:
+        if len(closed_1h) < MIN_BARS:
             skipped_gap += 1
             continue
         last_closed_open = closed_1h.index[-1]
@@ -159,10 +171,15 @@ async def run(start_dt: datetime, end_dt: datetime, symbol: str, out_path: str,
         closed_15m = df_15m[df_15m.index + pd.Timedelta(minutes=15) <= state_ts].tail(WINDOW["15m"])
         closed_1m = df_1m[df_1m.index + pd.Timedelta(minutes=1) <= state_ts].tail(WINDOW["1m"])
 
-        state = compile_state(closed_1h, closed_4h, df_15m=closed_15m, df_1m=closed_1m, state_ts=state_ts)
-        context = classify(state)
-        atr_pct = state.state_1h.volatility.atr_norm
-        decision = decide(context, atr_pct, has_open_position=False, position_side=None)
+        try:
+            state = compile_state(closed_1h, closed_4h, df_15m=closed_15m, df_1m=closed_1m, state_ts=state_ts)
+            context = classify(state)
+            atr_pct = state.state_1h.volatility.atr_norm
+            decision = decide(context, atr_pct, has_open_position=False, position_side=None)
+        except Exception as e:
+            skipped_error += 1
+            print(f"  ! skipped {state_ts}: {e}")
+            continue
 
         direction = "none"
         if decision.action.startswith("open_"):
@@ -190,7 +207,7 @@ async def run(start_dt: datetime, end_dt: datetime, symbol: str, out_path: str,
             logger._save()  # periodic checkpoint so a crash doesn't lose everything
 
     print(f"Computed {added} new candidates ({skipped_existing} already present, "
-          f"{skipped_gap} skipped for data gaps)")
+          f"{skipped_gap} skipped for data gaps, {skipped_error} skipped on error)")
 
     if added:
         print("Measuring exact forward returns from historical 1m data...")

@@ -53,22 +53,35 @@ class FuturesClient:
             since = batch[0][0] - _tf_ms(timeframe) * batch_size
         return all_candles[-limit:]
 
+    # Bitget serves old candles from a separate "historical" endpoint, capped
+    # at 200 candles/call (vs. 1000 for "recent", which only covers the last
+    # ~30 days for 1m — see ccxt's bitget.py fetchOHLCV: maxRecentDaysPerTimeframe
+    # / maxLimitForHistoryEndpoint). Passing useHistoryEndpoint=True forces it
+    # and makes results forward-anchored from `since` (without it, ccxt's
+    # auto-endpoint-selection anchors historical results from an *end* time
+    # instead, silently returning the wrong window for a since+limit call).
+    HISTORY_ENDPOINT_MAX_LIMIT = 200
+
     async def fetch_ohlcv_range(self, symbol: str, timeframe: str, since_ms: int, until_ms: int,
-                                 limit: int = 1000, progress_cb=None) -> list:
-        """Fetch ALL candles in [since_ms, until_ms) via forward since-pagination.
-        Unlike fetch_ohlcv() (which walks backward from "now" for the last N
-        candles — what the live loop uses), this walks forward from an explicit
-        historical start, the standard ccxt pattern for backfilling a range.
-        Additive: does not change fetch_ohlcv()'s behavior."""
+                                 limit: int = HISTORY_ENDPOINT_MAX_LIMIT, progress_cb=None) -> list:
+        """Fetch ALL candles in [since_ms, until_ms) via forward since-pagination
+        against Bitget's historical-candles endpoint. Unlike fetch_ohlcv() (which
+        walks backward from "now" for the last N candles — what the live loop
+        uses), this walks forward from an explicit historical start, for
+        backfilling an arbitrary past range. Additive: does not change
+        fetch_ohlcv()'s behavior."""
         sym = to_futures_symbol(symbol)
         tf_ms = _tf_ms(timeframe)
+        limit = min(limit, self.HISTORY_ENDPOINT_MAX_LIMIT)
         all_candles: list = []
         cursor = since_ms
         batches = 0
         while cursor < until_ms:
-            batch = await self._exchange.fetch_ohlcv(sym, timeframe, since=cursor, limit=limit)
+            batch = await self._exchange.fetch_ohlcv(
+                sym, timeframe, since=cursor, limit=limit,
+                params={"useHistoryEndpoint": True})
             if not batch:
-                break
+                break  # no more data in either direction (before listing / past "now")
             all_candles.extend(batch)
             batches += 1
             if progress_cb:
@@ -77,8 +90,10 @@ class FuturesClient:
             if last_ts < cursor:
                 break  # safety: exchange returned non-advancing data
             cursor = last_ts + tf_ms
-            if len(batch) < limit:
-                break  # fewer than requested → reached the end of available history
+            # NOT "if len(batch) < limit: break" — the historical endpoint can
+            # legitimately return < limit candles mid-range (e.g. near "now",
+            # where it hands off to the recent-candles endpoint) without that
+            # meaning history has actually run out; only an empty batch does.
         return [c for c in all_candles if since_ms <= c[0] < until_ms]
 
     async def fetch_order_book(self, symbol: str, limit: int = 20) -> dict:
