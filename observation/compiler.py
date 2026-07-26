@@ -101,7 +101,7 @@ def compile(df_1h: pd.DataFrame, df_4h: pd.DataFrame,
         st_r20 = _rng_15m(df_15m, 20)
         short_term = ShortTermState(
             direction=st_dir, rsi=round(st_rsi, 2), macd_norm=round(st_macd, 6),
-            momentum_aligned=(st_dir == mom_dir or st_dir == "neutral" or mom_dir == "neutral"),
+            momentum_aligned=bool(st_dir == mom_dir or st_dir == "neutral" or mom_dir == "neutral"),
             candle_direction=_candle_dir(df_15m),
             upper_rejection=round(_wick(df_15m, "up"), 4) if st_r20 > 0.75 else 0.0,
             lower_rejection=round(_wick(df_15m, "dn"), 4) if st_r20 < 0.25 else 0.0,
@@ -131,11 +131,11 @@ def compile(df_1h: pd.DataFrame, df_4h: pd.DataFrame,
             lower_wick_ratio=dw, close_location=cl,
             range_vs_avg=round(cur_rng / max(avg_rng, 1e-10), 4),
             volatility_1m=round(m_vol, 6), return_5m=round(m_ret5, 6),
-            immediate_reversal=reversal,
+            immediate_reversal=bool(reversal),
         )
 
     # ── Alignment ──
-    context_4h.trend_aligned = (
+    context_4h.trend_aligned = bool(
         (trend_dir == "bullish" and context_4h.structure_trend == "uptrend") or
         (trend_dir == "bearish" and context_4h.structure_trend == "downtrend")
     )
