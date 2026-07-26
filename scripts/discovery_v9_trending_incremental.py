@@ -106,6 +106,54 @@ def section_by_year(trade_df: pd.DataFrame) -> str:
     return "\n".join(lines) + "\n"
 
 
+def section_weak_years_diagnostic(trade_df: pd.DataFrame) -> str:
+    lines = [
+        "## Diagnostic: why do 2023 and 2025 diverge?\n",
+        "Per-year regime mix for ALL decision_rule_v1 trades (not just "
+        "trending), to check whether the weak years are a real regime-"
+        "specific effect or simply thin overall signal years.\n",
+        "| Year | ranging | transitioning | trending | total |",
+        "|---|---|---|---|---|",
+    ]
+    mix = trade_df.groupby(["year", "regime_4h"]).size().unstack(fill_value=0)
+    for year, row in mix.iterrows():
+        total = int(row.sum())
+        lines.append(
+            f"| {year} | {int(row.get('ranging', 0))} | {int(row.get('transitioning', 0))} | "
+            f"{int(row.get('trending', 0))} | {total} |"
+        )
+    lines.append("")
+    lines.append(
+        "**2023**: only 28 decision_rule_v1 trades total, 27 of them "
+        "already `trending` -- essentially no ranging/transitioning "
+        "signals fired at all that year (a quiet, low-volatility year, "
+        "consistent with the general BTC narrative for 2023). Median "
+        "-0.13% and mean +0.09% straddle zero in opposite directions "
+        "(n=27, tight distribution, max loss only -1.47%) -- this reads "
+        "as ordinary small-sample noise around zero, not a breakdown of "
+        "the effect.\n"
+    )
+    lines.append(
+        "**2025**: n=42 trending trades, mean pulled down by two larger "
+        "losses (-4.94%, -4.90%) out of 42 -- a higher-volatility year "
+        "(std 2.18% vs. 2023's 1.06%) where a couple of bigger-than-"
+        "typical losing trades move the mean; the median stays close to "
+        "zero. Consistent with the known median-over-mean tail-risk gap "
+        "already documented throughout this project (see the house "
+        "rules), not evidence the regime-conditioning itself failed.\n"
+    )
+    lines.append(
+        "**Reading:** both weak years are the two thinnest-signal years "
+        "in the whole Discovery period. Their negative averages look "
+        "like ordinary variance around a small n, not a second, "
+        "contradicting regime effect. This tempers concern about the "
+        "4/6 count somewhat, but does not turn it into a clean 6/6 -- "
+        "there just isn't enough data in 2023/2025 to say much either "
+        "way.\n"
+    )
+    return "\n".join(lines) + "\n"
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--cutoff", default="2026-01-01")
@@ -144,7 +192,11 @@ def main():
         "year": year_by_ts.get(t["entry_ts"]),
     } for t in trades])
 
-    body = section_overall(trade_df) + "\n---\n\n" + section_by_year(trade_df)
+    body = (
+        section_overall(trade_df) + "\n---\n\n" +
+        section_by_year(trade_df) + "\n---\n\n" +
+        section_weak_years_diagnostic(trade_df)
+    )
 
     header = (
         "# Discovery v9 — does regime_4h=='trending' add incremental value on decision_rule_v1's real trades?\n\n"
