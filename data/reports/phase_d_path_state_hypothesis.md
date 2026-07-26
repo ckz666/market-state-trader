@@ -599,3 +599,56 @@ prior-episode history clearly carries information. The open question is
 now sharper: not *whether* re-entry matters (it does), but how to build a
 live-observable version of "how many deep episodes has this trade already
 had by time t" into whatever Action Class is eventually chosen.
+
+## 20. Result — live-observable episode history, and a refinement of §19
+
+`phase_d_episode_history_landmark_v1.py` rebuilt §19's episode-count
+finding as a proper landmark measure: `episode_count_so_far(t)` and
+`currently_deep(t)`, both using only the path observable up to checkpoint
+t (1h/2h/3h) — fixing §19's explicitly-flagged hindsight problem.
+
+**Section A** (episode count alone, live) reproduces the broad shape of
+§19's whole-hold table — win rate falls from ~57-67% at 0 episodes to
+~33-36% at 3+ — but is noticeably noisier (e.g. at 1h, 3+ episodes shows
+36.3% vs. 2 episodes' 34.5%, a small non-monotonicity). That noise turns
+out to have a clean explanation in Section B.
+
+**Section B** (episode count **and** current deep/recovered status,
+combined) is the important refinement:
+
+| t | 0: never deep | in ep. 1 (ongoing) | recovered after 1, no re-entry | in ep. 2 (ongoing) | recovered after 2+ | in ep. 3+ (ongoing) |
+|---|---|---|---|---|---|---|
+| 1h | 60.4% | 28.6% | 57.5% | 29.5% | 47.1% | 18.9% |
+| 2h | 67.1% | 21.0% | 62.5% | 2.7% | 55.3% | 12.5% |
+| 3h | 74.0% | 3.8% | 68.5% | 8.9% | 53.2% | 3.7% |
+
+**This meaningfully revises how §19's stark 78.6% vs. 28.8% split should
+be read.** That split mixed two different current-status populations
+together inside "re-entry (2+ episodes)": trades currently stuck in a
+later episode (here: 2.7-29.5%, consistently bad) and trades that
+re-entered but are currently clear again (here: "recovered after 2+
+episodes", 47.1-55.3% — moderate, not catastrophic). Once current status
+is disaggregated from episode count:
+
+- **Current status dominates.** "Currently in an episode" is bad at every
+  checkpoint regardless of episode count (18.9-29.5% at 1h, decaying
+  further with elapsed time — consistent with §16's landmark effect).
+  "Currently recovered" stays moderate-to-good regardless of how many
+  episodes it took to get there.
+- **Episode count still adds a real, smaller, secondary effect.**
+  "Recovered after 1 episode, no re-entry" (57.5-68.5%) consistently
+  beats "recovered after 2+ episodes" (47.1-55.3%) at every checkpoint —
+  a real, moderate gap, not noise (holds at all three checkpoints,
+  decent n throughout). It is just much smaller than §19's raw 78.6% vs.
+  28.8% made it look, because that number wasn't controlling for current
+  status.
+
+**Conclusion for §18's open items:** the live-observable path-state is
+better represented as the joint (current status × episode count so far)
+in Section B's 6-way split than as either dimension alone. Neither "just
+use the recovery-window landmark effect (§16)" nor "just use total
+episode count (§19)" is the full picture; §20's 6-way state is the
+current best live-observable summary of what actually predicts outcome.
+This is now a reasonable basis for finally choosing an Action Class and
+freezing `w` (§18's open items 1-2) — no further broadening of Discovery
+is planned before that decision.
