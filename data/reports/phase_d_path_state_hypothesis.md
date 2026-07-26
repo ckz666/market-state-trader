@@ -923,3 +923,94 @@ adopt `w=120m` Recovery-Timeout going forward, keep it provisional
 pending more 2026 data (the live paper-trading service continues
 collecting `data/candidates.json`), or hold off, is a decision for the
 user — not resolved by this result alone.
+
+## 26. Literature positioning (verified 2026-07-26)
+
+Checked against existing literature before writing this system up as
+novel. Two specific citations were independently verified (not taken on
+faith) via search:
+
+- **Bailey, D.H. & López de Prado, M. — "Drawdown-Based Stop-Outs and the
+  'Triple Penance' Rule"** (SSRN 2201302) and the companion **"How Long
+  Does It Take to Recover from a Drawdown?"** (SSRN 2254668) — real
+  papers. Core finding: under standard assumptions, expected time to
+  recover from a max drawdown is about three times the time it took to
+  produce it, at a given confidence level; used to decide when to stop
+  out a *portfolio/strategy*, not an individual trade.
+- **"On Data-Driven Drawdown Control with Restart Mechanism in Trading"**
+  (arXiv:2303.02613, also published in a 2023 ScienceDirect issue) —
+  real paper, tested on equity ETFs and cryptocurrency data. Adds a
+  data-driven restart mechanism to a drawdown-modulated trading system
+  so a strategy that has been stopped out can re-enter, rather than
+  staying out permanently.
+- **Maximum Adverse Excursion (MAE)**, introduced by John Sweeney
+  (Technical Analysis of Stocks & Commodities) — the standard, decades-
+  old concept this project's own `mae_so_far`/`final_mae` metrics are a
+  direct instance of. Well established for setting a single stop level
+  from historical MAE distributions; the search turned up nothing
+  combining it with an episode/re-entry/recovery-timeout structure.
+
+**How this project's approach relates to, and differs from, each:**
+
+| Established concept | What it shares with this project | What differs |
+|---|---|---|
+| Time stop / max holding period | Exiting based on elapsed time | Classic version keys on time-since-entry; here the clock starts at adverse-*state*-transition, not at entry |
+| Triple Penance / drawdown recovery time | "How long should a bad state be given to recover before acting" | Portfolio/strategy-level in the literature; here applied per-trade, with an explicit re-entry-aware episode history |
+| Optimal stopping (sequential deadlines) | Formal exit-timing question under uncertainty | That literature typically derives an exit rule from an assumed price process; this project's rule came from an empirical, iteratively falsified state-transition analysis (§11-§23), not a closed-form model |
+| Drawdown control + restart (arXiv:2303.02613) | "Don't treat a stopped-out state as permanent — allow re-entry" | Applied at the strategy/equity-curve level there; here at the single-trade, single-episode level, with an explicit `episode_count_so_far` / current-status distinction (§19-§20) |
+| Maximum Adverse Excursion | Same underlying `mae_so_far` metric | MAE literature sets one static stop threshold; this project explicitly rejected that (§22's Action Class I, the "exit whenever in an adverse state" rule, was a *net negative* precisely because it ignored payoff asymmetry) |
+
+**Assessment:** the individual building blocks (time stops, drawdown
+recovery time, optimal stopping, restart-after-stop-out) are each
+independently well established. The specific combination developed in
+§11-§23 — episode detection → recovery landmark → re-entry-aware episode
+history → a recovery-timeout keyed to time-since-adverse-episode-start
+rather than time-since-entry — was not found as a named, pre-existing
+standard pattern in this search. That is a claim about this search not
+finding it, not a claim of proven originality; it should not be
+overstated in either direction.
+
+## 27. Final classification and forward plan (2026-07-26)
+
+**Reclassifying §25's result, per the user's more precise framing:**
+not "A" (confirmed) as a literal reading of §24's criteria would suggest,
+and not "C" (refuted) either. The correct status is:
+
+> **PROVISIONALLY CONSISTENT** — Discovery-positive, OOS-direction-
+> consistent, statistically inconclusive.
+
+The reason is sharper than "n=39 is small": the relevant sample for this
+hypothesis is not 39 trades, it is the **6 trades the rule actually
+intervened on** (2 at episode 1, 4 at episode 3+; episode 2 never
+occurred in 2026 at all). Sign held in both periods (Discovery mean
+delta ≈ +0.0245pp; OOS mean delta ≈ +0.0604pp, both favoring Action Class
+II over baseline) — a real, non-trivial fact — but with an intervention
+rate this low (6/39 ≈ 15.4%), the overall portfolio statistics can only
+ever move moderately even if the per-intervention effect is real,
+because `overall effect ≈ intervention rate × effect per intervention`.
+This is itself informative: Action Class II is a rare-path filter, not a
+general-purpose exit mechanism, and should be judged as one.
+
+**Decision: no further tuning. `w=120m` stays frozen exactly as decided
+in §24.** Specifically ruled out right now:
+- Re-optimizing `w`.
+- Testing a new Action Class.
+- Any adjustment prompted by the small OOS sample.
+
+**Forward plan:** the existing `market-state-trader.service` paper-
+trading loop continues collecting live candidates under the frozen rule,
+unmodified — this is now prospective data collection under a pre-
+registered hypothesis, not a new test. Track two levels separately going
+forward, per the user's framing:
+- **Portfolio level:** baseline vs. Action Class II, all trades.
+- **Intervention level:** only the trades the rule actually acts on,
+  Action Class II vs. the counterfactual hold-to-4h for those same
+  trades — the more informative comparison for this specific hypothesis.
+
+**Next re-evaluation trigger:** not a calendar date or a fixed trade
+count, but the **intervention-level sample size** — re-assess once
+roughly **20-30 actually-affected trades** have accumulated (not 20-30
+total trades; total trades will need to be much larger given the ~15%
+intervention rate observed so far). Until then, this document's
+classification stands as PROVISIONALLY CONSISTENT, not confirmed and not
+refuted.
