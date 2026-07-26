@@ -171,6 +171,38 @@ curl localhost:8081/api/candidates?limit=50             # recent candidates + su
 curl localhost:8081/api/analysis                        # per-context win-rate/expectancy (analysis/report.py)
 ```
 
+## Backfill: months of history in minutes
+
+`scripts/backfill.py` reconstructs historical candidates instead of waiting
+for the live collector hour by hour — it reuses the exact same
+`compile_state()` / `classify()` / `decide()` code path, iterating past 1h
+candle-close timestamps instead of real time, with the same bounded
+trailing window (`WINDOW = {1m:120, 15m:96, 1h:200, 4h:50}`) a live cycle
+would have seen. Forward returns are measured immediately against the
+already-known historical 1m price series.
+
+```bash
+.venv/bin/python scripts/backfill.py --start 2025-01-01 --end 2026-07-26
+.venv/bin/python scripts/backfill.py --days 180                   # last 180 days, ending now
+.venv/bin/python scripts/backfill.py --start 2025-01-01 --dry-run  # fetch/cache only, no compute
+```
+
+**This is a backfill, not a backtest** — no position sequencing, no PnL,
+`execution_price == state_price` for every backfilled candidate (there's
+no live tick to record in the past). `decision`/`direction` are computed
+for schema completeness only, always assuming no open position. It answers
+"what did the state look like, and what happened next?", not "would a
+strategy have made money?".
+
+Writes to its own file, **`data/historical_candidates.json`**, never to
+the live collector's `data/candidates.json` — safe to run while the live
+systemd service keeps writing that file concurrently. Combine both files
+for analysis; dedupe by `timestamp` first if their date ranges overlap.
+Per-timeframe OHLCV is cached to CSV under `data/backfill_cache/` so
+re-running with a wider range doesn't re-fetch already-covered history.
+1m history depth on Bitget goes back at least to January 2025 (tested);
+the true earliest boundary for this symbol wasn't determined further back.
+
 ## Web UI
 
 Dark dashboard at `http://<host>:8081`: live BTC/USDT candlestick chart
