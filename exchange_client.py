@@ -53,6 +53,34 @@ class FuturesClient:
             since = batch[0][0] - _tf_ms(timeframe) * batch_size
         return all_candles[-limit:]
 
+    async def fetch_ohlcv_range(self, symbol: str, timeframe: str, since_ms: int, until_ms: int,
+                                 limit: int = 1000, progress_cb=None) -> list:
+        """Fetch ALL candles in [since_ms, until_ms) via forward since-pagination.
+        Unlike fetch_ohlcv() (which walks backward from "now" for the last N
+        candles — what the live loop uses), this walks forward from an explicit
+        historical start, the standard ccxt pattern for backfilling a range.
+        Additive: does not change fetch_ohlcv()'s behavior."""
+        sym = to_futures_symbol(symbol)
+        tf_ms = _tf_ms(timeframe)
+        all_candles: list = []
+        cursor = since_ms
+        batches = 0
+        while cursor < until_ms:
+            batch = await self._exchange.fetch_ohlcv(sym, timeframe, since=cursor, limit=limit)
+            if not batch:
+                break
+            all_candles.extend(batch)
+            batches += 1
+            if progress_cb:
+                progress_cb(batches, all_candles[-1][0])
+            last_ts = batch[-1][0]
+            if last_ts < cursor:
+                break  # safety: exchange returned non-advancing data
+            cursor = last_ts + tf_ms
+            if len(batch) < limit:
+                break  # fewer than requested → reached the end of available history
+        return [c for c in all_candles if since_ms <= c[0] < until_ms]
+
     async def fetch_order_book(self, symbol: str, limit: int = 20) -> dict:
         return await self._exchange.fetch_order_book(to_futures_symbol(symbol), limit)
 
@@ -160,6 +188,8 @@ class ExchangeClient:
         await self._client.__aexit__(*args)
     async def fetch_ohlcv(self, symbol, timeframe, limit=300):
         return await self._client.fetch_ohlcv(symbol, timeframe, limit)
+    async def fetch_ohlcv_range(self, symbol, timeframe, since_ms, until_ms, limit=1000, progress_cb=None):
+        return await self._client.fetch_ohlcv_range(symbol, timeframe, since_ms, until_ms, limit, progress_cb)
     async def fetch_ticker(self, symbol):
         return await self._client.fetch_ticker(symbol)
     async def fetch_funding_rate(self, symbol):

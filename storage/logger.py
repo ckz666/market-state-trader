@@ -22,6 +22,7 @@ class Candidate:
     decision: str
     decision_reason: str
     market_state: Optional[dict] = None
+    source: str = "live"                   # "live" (real-time collector) | "backfill" (scripts/backfill.py)
     # Raw forward returns (dir-agnostic — not adjusted for long/short)
     forward_return_15m: Optional[float] = None
     forward_return_30m: Optional[float] = None
@@ -49,7 +50,11 @@ class CandidateLogger:
     # constant, silently losing everything older than ~83 days.
     MAX_CANDIDATES = 50_000
 
-    def __init__(self):
+    def __init__(self, file_path: Optional[str] = None):
+        # Defaults to the live collector's file; scripts/backfill.py passes
+        # its own path so it never touches candidates.json while the live
+        # service may be reading/writing it concurrently.
+        self.file_path = file_path or config.CANDIDATES_FILE
         self.candidates: list[Candidate] = []
         self._load()
 
@@ -161,7 +166,7 @@ class CandidateLogger:
         }
 
     def _save(self):
-        os.makedirs(config.DATA_DIR, exist_ok=True)
+        os.makedirs(os.path.dirname(self.file_path) or ".", exist_ok=True)
         # self.candidates is already capped at MAX_CANDIDATES by add() — persist
         # all of it, not some smaller slice (that used to silently drop
         # anything older than 2000 candidates from disk, ~83 days in).
@@ -169,16 +174,16 @@ class CandidateLogger:
             "candidates": [c.to_dict() for c in self.candidates],
             "saved_at": datetime.now(timezone.utc).isoformat(),
         }
-        tmp = config.CANDIDATES_FILE + ".tmp"
+        tmp = self.file_path + ".tmp"
         with open(tmp, "w") as f:
             json.dump(data, f, indent=2)
-        os.replace(tmp, config.CANDIDATES_FILE)
+        os.replace(tmp, self.file_path)
 
     def _load(self):
-        if not os.path.exists(config.CANDIDATES_FILE):
+        if not os.path.exists(self.file_path):
             return
         try:
-            with open(config.CANDIDATES_FILE) as f:
+            with open(self.file_path) as f:
                 data = json.load(f)
             for d in data.get("candidates", []):
                 self.candidates.append(Candidate(
@@ -192,6 +197,7 @@ class CandidateLogger:
                     decision=d.get("decision", "hold"),
                     decision_reason=d.get("decision_reason", ""),
                     market_state=d.get("market_state"),
+                    source=d.get("source", "live"),
                     # new field names (post-2026-07-26)
                     forward_return_15m=d.get("forward_return_15m", d.get("outcome_15m")),
                     forward_return_30m=d.get("forward_return_30m", d.get("outcome_30m")),
