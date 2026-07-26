@@ -83,20 +83,28 @@ def first_episode(entry_ts, entry_price: float, price_history: dict, sorted_ts: 
     if t_enter_ms is None:
         return None  # never entered the deep state at all
 
+    ret_at_close = (price_history[path_ts[-1]] - entry_price) / entry_price
+
     if t_recover_ms is not None:
         return {
             "t_enter_min": (t_enter_ms - entry_ms) / 60_000,
             "duration_min": (t_recover_ms - t_enter_ms) / 60_000,
             "censored": False,
+            "ret_at_close": ret_at_close,
         }
     return {
         "t_enter_min": (t_enter_ms - entry_ms) / 60_000,
         "duration_min": (path_ts[-1] - t_enter_ms) / 60_000,
         "censored": True,
+        "ret_at_close": ret_at_close,
     }
 
 
 def build_episode_frame(trades: list, price_history: dict, sorted_ts: list) -> pd.DataFrame:
+    """`ret_at_close` is the return at the LAST scanned point (the 4h
+    close), independent of whether/when the first episode recovered --
+    used only to check for re-entry (see section_reentry_check), never as
+    a live-observable feature."""
     rows = []
     for t in trades:
         ep = first_episode(t["entry_ts"], t["entry_price"], price_history, sorted_ts)
@@ -104,6 +112,48 @@ def build_episode_frame(trades: list, price_history: dict, sorted_ts: list) -> p
             continue
         rows.append({**ep, "net_return": t["net_return"]})
     return pd.DataFrame(rows)
+
+
+def section_reentry_check(df: pd.DataFrame) -> str:
+    """Known scope limitation (see module docstring): only the FIRST deep
+    episode is measured. A trade whose first episode recovers quickly can
+    still re-enter the deep state later and remain impaired at the 4h
+    close -- this checks how often that actually happens, so the
+    'recovered' label above is understood as 'recovered from its first
+    episode', not 'never impaired again'."""
+    lines = [
+        "## Re-entry check: how often does a 'recovered' trade backslide later?\n",
+        "Among trades whose FIRST deep episode recovered (non-censored "
+        "above): what fraction are back at/below the deep threshold "
+        "again AT THE 4h CLOSE (i.e. re-entered a second deep episode "
+        "that this script does not separately track, and never "
+        "re-recovered from it)? This does not change any number "
+        "reported above -- it quantifies a limitation stated in the "
+        "module docstring, so 'recovered' can be read correctly as "
+        "'recovered from the first episode', not 'clear for the rest of "
+        "the hold.'\n",
+        "| First-episode duration bucket | n | Re-entered & still impaired at close | Win rate of that subset |",
+        "|---|---|---|---|",
+    ]
+    recovered = df[~df["censored"]]
+    for lo, hi, label in DURATION_BUCKETS:
+        sub = recovered[(recovered["duration_min"] >= lo) & (recovered["duration_min"] < hi)]
+        if sub.empty:
+            continue
+        reimpaired = sub[sub["ret_at_close"] <= DEEP_THRESHOLD]
+        if len(reimpaired) < MIN_CELL_N:
+            lines.append(f"| {label} | {len(sub)} | {len(reimpaired)} ({len(reimpaired)/len(sub)*100:.1f}%) | n too few |")
+            continue
+        wr = (reimpaired["net_return"] > 0).mean()
+        lines.append(
+            f"| {label} | {len(sub)} | {len(reimpaired)} ({len(reimpaired)/len(sub)*100:.1f}%) | {wr*100:.1f}% |"
+        )
+    n_all_reimpaired = (recovered["ret_at_close"] <= DEEP_THRESHOLD).sum()
+    lines.append(
+        f"| **all recovered trades, combined** | {len(recovered)} | "
+        f"{n_all_reimpaired} ({n_all_reimpaired/len(recovered)*100:.1f}%) | - |"
+    )
+    return "\n".join(lines) + "\n"
 
 
 def _cell(sub: pd.Series):
@@ -188,7 +238,8 @@ def main():
 
     body = (
         "## Duration-in-state-3 vs. eventual outcome\n\n" + section(episode_df) +
-        "\n---\n\n## When the deep episode starts (confound check)\n\n" + section_t_enter(episode_df)
+        "\n---\n\n## When the deep episode starts (confound check)\n\n" + section_t_enter(episode_df) +
+        "\n---\n\n" + section_reentry_check(episode_df)
     )
 
     header = (

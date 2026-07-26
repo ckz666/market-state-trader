@@ -1,8 +1,10 @@
 # Phase D recovery-window v1 -- landmark test: does absence of recovery predict outcome LIVE
 
-Generated 2026-07-26T16:30:14.353980+00:00.
+Generated 2026-07-26T16:39:05.584206+00:00.
 
 Still not a position-management rule. Tests `P(winner | deep episode started at t0, not yet recovered at t0+w)` using only information available at t0+w (a proper landmark cut, not the 'never recovered by close' hindsight cut from phase_d_time_in_state3_v1.py). Same frozen deep threshold (Def 1, -0.75%) and population (decision_rule_v1's actual Discovery trades) as the rest of Phase D. Cells with n < 15 are marked instead of reported. 2026 untouched.
+
+**Caveat, quantified in phase_d_time_in_state3_v1.md's re-entry check:** 'recovered by t0+w' here means recovered from the FIRST deep episode, not 'clear for the rest of the hold' -- 40.0% of first-episode 'recovered' trades (246/615) are back at/below the deep threshold again by the 4h close. This likely means the true gap between a genuinely-clear path and a not-yet-recovered one is understated here, not overstated: the 'recovered' column in section A is diluted by this ~40% backslide fraction rather than representing a clean population.
 
 ---
 

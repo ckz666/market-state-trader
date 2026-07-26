@@ -1,6 +1,6 @@
 # Phase D time-in-state-3 v1 -- duration in the impaired state vs. eventual outcome
 
-Generated 2026-07-26T16:24:22.138514+00:00.
+Generated 2026-07-26T16:37:24.855043+00:00.
 
 Still not a position-management rule. Measures `duration_in_state_3` from the 1-minute price path (finer than the checkpoint grid used in phase_c/phase_d v1-v4): minutes from the first crossing at/below the deep threshold (-0.75%, Def 1, same as phase_d_recovery_state_v1.py) to the first subsequent crossing back above it, for decision_rule_v1's actual Discovery trades. Trades that never recover within the 4h hold are reported as a separate censored group, not folded into the duration buckets. Only the first deep episode per trade is measured (re-entries after a recovery are out of scope here). Cells with n < 15 are marked instead of reported. 2026 untouched.
 
@@ -31,3 +31,18 @@ Secondary check: trades that first reach the deep threshold LATE in the hold hav
 | 1-2h | 123 | 8 (7%) | 30.9% (n=123), median -0.7232%, mean -1.0716%, P05 -4.59% |
 | 2-3h | 69 | 7 (10%) | 21.7% (n=69), median -0.7975%, mean -1.0158%, P05 -3.25% |
 | 3-4h | 48 | 9 (19%) | 10.4% (n=48), median -1.0112%, mean -1.0830%, P05 -2.67% |
+
+---
+
+## Re-entry check: how often does a 'recovered' trade backslide later?
+
+Among trades whose FIRST deep episode recovered (non-censored above): what fraction are back at/below the deep threshold again AT THE 4h CLOSE (i.e. re-entered a second deep episode that this script does not separately track, and never re-recovered from it)? This does not change any number reported above -- it quantifies a limitation stated in the module docstring, so 'recovered' can be read correctly as 'recovered from the first episode', not 'clear for the rest of the hold.'
+
+| First-episode duration bucket | n | Re-entered & still impaired at close | Win rate of that subset |
+|---|---|---|---|
+| <15m | 515 | 206 (40.0%) | 0.0% |
+| 15-30m | 36 | 15 (41.7%) | 0.0% |
+| 30-60m | 32 | 10 (31.2%) | n too few |
+| 60-120m | 21 | 9 (42.9%) | n too few |
+| 120-240m | 11 | 6 (54.5%) | n too few |
+| **all recovered trades, combined** | 615 | 246 (40.0%) | - |

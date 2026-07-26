@@ -444,3 +444,43 @@ starting somewhere around w=60m, and clearly by w=90-120m.
 **Still not decided:** which Action Class, and at which specific w. That
 remains the next step, deliberately not decided in the same breath as
 confirming the underlying structure.
+
+## 17. Verification pass (2026-07-26)
+
+At the user's request, all Phase D steps (`phase_c_trade_path_analysis_v4.py`
+through `phase_d_recovery_window_v1.py`) were re-verified:
+
+- **Reproducibility:** every script re-run from scratch produced output
+  byte-identical to the committed report (aside from the timestamp line).
+- **Cross-script consistency:** `phase_d_time_in_state3_v1.py`'s 662
+  ever-deep trades and its `t_enter` time buckets (69 starting 2-3h, 48
+  starting 3-4h) exactly reconcile with `phase_d_recovery_window_v1.py`'s
+  per-window eligible counts (662 - 545 = 117 = 69 + 48 at w=120m; 662 -
+  614 = 48 at w=60m) — confirms both scripts' underlying episode
+  detection agrees.
+- **Manual single-trade check:** a COVID-crash-day trade (entry
+  2020-03-12 18:00 UTC) was hand-recomputed directly from the 1-minute
+  CSV outside any script; `mae_1h`/`ret_1h` matched the pipeline exactly.
+- **A real, previously-unquantified limitation, now measured and fixed:**
+  both `phase_d_time_in_state3_v1.py` and `phase_d_recovery_window_v1.py`
+  track only a trade's FIRST deep episode (documented as a scope
+  limitation from the start, §14). Manually inspecting that same
+  COVID-day trade showed 10 separate below-threshold episodes within one
+  4h hold — not a rare pattern. Quantified project-wide: of the 615
+  Discovery trades that "recovered" by the first-episode definition,
+  **246 (40.0%) are back at/below the deep threshold again at the actual
+  4h close** — i.e. "recovered" in these two reports means "recovered
+  from its first dip," not "clear for the rest of the hold." Both
+  reports now state this explicitly (`phase_d_time_in_state3_v1.py` gained
+  a dedicated re-entry-check section; `phase_d_recovery_window_v1.py`
+  gained a header caveat). This does not overturn §16's finding — if
+  anything it means the true gap between a genuinely-recovered path and
+  a not-yet-recovered one is understated by the current numbers, since
+  the "recovered" comparison group is diluted by this ~40% backslide
+  fraction — but it is a real limitation of the current episode-detection
+  method, not just a theoretical one, and should be kept in mind before
+  any Action Class is designed on top of it.
+- No other logic errors were found in the reviewed scripts (index
+  handling, checkpoint monotonicity, `MIN_CELL_N` gating, threshold
+  direction, and the `DD_current`/`MAE_so_far` distinction all checked
+  out).

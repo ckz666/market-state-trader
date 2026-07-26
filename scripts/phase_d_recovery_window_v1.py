@@ -156,6 +156,15 @@ def main():
         "(decision_rule_v1's actual Discovery trades) as the rest of "
         f"Phase D. Cells with n < {MIN_CELL_N} are marked instead of "
         "reported. 2026 untouched.\n\n"
+        "**Caveat, quantified in phase_d_time_in_state3_v1.md's re-entry "
+        "check:** 'recovered by t0+w' here means recovered from the "
+        "FIRST deep episode, not 'clear for the rest of the hold' -- "
+        "40.0% of first-episode 'recovered' trades (246/615) are back "
+        "at/below the deep threshold again by the 4h close. This likely "
+        "means the true gap between a genuinely-clear path and a "
+        "not-yet-recovered one is understated here, not overstated: the "
+        "'recovered' column in section A is diluted by this ~40% "
+        "backslide fraction rather than representing a clean population.\n\n"
         "---\n\n"
     )
     full = header + body
