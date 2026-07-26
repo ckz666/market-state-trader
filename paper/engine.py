@@ -69,7 +69,7 @@ class PaperTrader:
         """Open a new position."""
         margin = (amount * price) / leverage
         fee = amount * price * config.TAKER_FEE
-        self.balance -= fee
+        self.balance -= fee  # only fee deducted; margin is tracked in position, not subtracted from balance
         self.position = Position(
             symbol=config.SYMBOL, side=side, amount=amount,
             entry_price=price, leverage=leverage,
@@ -86,7 +86,7 @@ class PaperTrader:
         pnl = self.position.unrealized_pnl(price)
         fee = self.position.amount * price * config.TAKER_FEE
         pnl -= fee + self.position.funding_paid
-        self.balance += pnl + self.position.margin
+        self.balance += pnl  # margin was never deducted, don't add it back
         if self.balance > self.peak_balance:
             self.peak_balance = self.balance
 
@@ -161,6 +161,15 @@ class PaperTrader:
             self.balance = data.get("balance", config.INITIAL_BALANCE)
             self.peak_balance = data.get("peak_balance", self.balance)
             self.trade_history = data.get("trades", [])
-            # Position can't be reconstructed perfectly — start fresh
+            # Position persisted for restart safety
+            pos_data = data.get("position")
+            if pos_data:
+                self.position = Position(
+                    symbol=pos_data.get("symbol",""), side=pos_data.get("side","long"),
+                    amount=pos_data.get("amount",0), entry_price=pos_data.get("entry_price",0),
+                    leverage=pos_data.get("leverage",1), stop_loss=pos_data.get("stop_loss",0),
+                    take_profit=pos_data.get("take_profit",0), opened_at=pos_data.get("opened_at",""),
+                    margin=pos_data.get("margin",0), funding_paid=pos_data.get("funding_paid",0),
+                )
         except Exception:
             pass

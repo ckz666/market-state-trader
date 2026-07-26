@@ -25,15 +25,22 @@ def compile(df_1h: pd.DataFrame, df_4h: pd.DataFrame,
 
     from indicators.ml_signal import get_indicators, detect_market_structure
 
-    # ── 4H Context ──
+    # ── 4H Context (real pivot data, not derived from label) ──
     ms_4h = detect_market_structure(df_4h) if len(df_4h) > 12 else {}
     ind_4h = get_indicators(df_4h) if len(df_4h) > 30 else {}
+    ph = ms_4h.get("pivot_highs", [])
+    pl = ms_4h.get("pivot_lows", [])
+    # Derive HH/HL/LH/LL from actual pivot deltas (not from trend label)
+    hh = hl = lh = ll = False
+    if len(ph) >= 2:
+        hh = ph[-1] > ph[-2]
+        lh = ph[-1] < ph[-2]
+    if len(pl) >= 2:
+        hl = pl[-1] > pl[-2]
+        ll = pl[-1] < pl[-2]
     context_4h = Context4h(
         structure_trend=ms_4h.get("trend", "unknown"),
-        hh=ms_4h.get("trend") in ("uptrend", "expanding"),
-        hl=ms_4h.get("trend") in ("uptrend", "contracting"),
-        lh=ms_4h.get("trend") in ("downtrend", "contracting"),
-        ll=ms_4h.get("trend") in ("downtrend", "expanding"),
+        hh=hh, hl=hl, lh=lh, ll=ll,
         regime="trending" if ind_4h.get("adx", 0) >= 25 else ("ranging" if ind_4h.get("adx", 0) < 20 else "transitioning"),
     )
 

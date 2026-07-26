@@ -31,7 +31,7 @@ class MarketStateTrader:
         self.last_context = None
         self.last_decision = None
         self.log: list[dict] = []
-        self._last_1h_close = 0.0
+        self._last_1h_ts = None
         self.ohlcv_cache: dict = {"1m": [], "15m": [], "1h": [], "4h": []}
 
     def _log(self, level: str, msg: str):
@@ -70,14 +70,14 @@ class MarketStateTrader:
                 "4h": [{"t": r[0], "o": r[1], "h": r[2], "l": r[3], "c": r[4]} for r in raw_4h[-24:]],
             }
 
-            # Only evaluate on new 1h candle
-            current_close = float(df_1h["close"].iloc[-1])
-            new_candle = abs(current_close - self._last_1h_close) > 0.01
-            if not new_candle and self.cycle_count > 0:
+            # Only evaluate when a NEW 1h candle has COMPLETED
+            # Use the 2nd-to-last candle (last fully closed one)
+            last_closed_ts = df_1h.index[-2]
+            if last_closed_ts == self._last_1h_ts:
                 self.logger.update_outcomes(self.live_price)
                 self.paper.record_equity(self.live_price)
                 return
-            self._last_1h_close = current_close
+            self._last_1h_ts = last_closed_ts
 
             # SL/TP
             trigger = self.paper.check_sl_tp(self.live_price)
@@ -86,7 +86,9 @@ class MarketStateTrader:
                 self._log("TRADE", f"{trigger.upper()} @ ${self.live_price:,.2f} | PnL: ${record['pnl']:+.2f}")
 
             # Compile state
-            state = compile_state(df_1h, df_4h, df_15m=df_15m, df_1m=df_1m)
+                        # Use only COMPLETED candles (drop the in-progress last one)
+            state = compile_state(df_1h.iloc[:-1], df_4h.iloc[:-1],
+                                  df_15m=df_15m.iloc[:-1], df_1m=df_1m.iloc[:-1])
             self.last_state = state
 
             # Context

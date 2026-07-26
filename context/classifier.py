@@ -69,6 +69,14 @@ def classify(state: MarketState) -> MarketContext:
                 rationale=f"Price extended (bb={bb:.2f}), bearish momentum overextended → avoid short",
                 suggested_action="avoid_short",
             )
+        # Symmetric: price below lower BB → avoid shorts (lower extension)
+        if bb < 0.0 and mom_dir == "bearish":
+            return MarketContext(
+                name="extended", direction_bias="neutral",
+                confidence=min(abs(bb) * 5 + 0.3, 0.95),
+                rationale=f"Price below lower BB (bb={bb:.2f}), bearish momentum overextended → avoid short",
+                suggested_action="avoid_short",
+            )
 
     # 2. COMPRESSED
     if squeeze_active or atr < 0.005:
