@@ -60,23 +60,25 @@ def detect_patterns(df: pd.DataFrame) -> dict:
     if body / tr_safe < 0.15 and uw > 2 * body and dw > 2 * body and tr > avg_range * 1.5:
         patterns["high_wave"] = "neutral"
 
-    # Hammer: long lower wick, small body at top of range (at support → bullish)
-    if dw > 2 * body and uw < body * 0.5 and body / tr_safe < 0.35:
-        patterns["hammer"] = "bullish"
-
-    # Inverted Hammer: long upper wick, small body at bottom → bullish (buyers tried)
-    if uw > 2 * body and dw < body * 0.5 and body / tr_safe < 0.35:
-        patterns["inverted_hammer"] = "bullish"
-
-    # Hanging Man: same shape as hammer but at top → bearish warning
-    # (context-blind here; we check if prev trend was up)
+    # Trend context for differentiating reversal patterns
     prev_trend_up   = df["close"].tail(10).iloc[-1] > df["close"].tail(10).iloc[0]
     prev_trend_down = not prev_trend_up
+    small_body = body / tr_safe < 0.35
+
+    # Hammer: long lower wick, small body, after downtrend → bullish reversal
+    if dw > 2 * body and uw < body * 0.5 and small_body and prev_trend_down:
+        patterns["hammer"] = "bullish"
+
+    # Hanging Man: same shape as hammer but after uptrend → bearish warning
     if dw > 2 * body and uw < body * 0.5 and prev_trend_up:
         patterns["hanging_man"] = "bearish"
 
-    # Shooting Star: long upper wick, small body at top → bearish
-    if uw > 2 * body and dw < body * 0.5 and body / tr_safe < 0.35:
+    # Inverted Hammer: long upper wick, small body, after downtrend → bullish reversal
+    if uw > 2 * body and dw < body * 0.5 and small_body and prev_trend_down:
+        patterns["inverted_hammer"] = "bullish"
+
+    # Shooting Star: long upper wick, small body, after uptrend → bearish reversal
+    if uw > 2 * body and dw < body * 0.5 and small_body and prev_trend_up:
         patterns["shooting_star"] = "bearish"
 
     # Bullish Belt Hold: opens at/near the low, strong body, no lower wick, after a downtrend

@@ -54,7 +54,7 @@ def classify(state: MarketState) -> MarketContext:
     st_15m_aligned = state.short_term_15m.momentum_aligned
     micro_reversal = state.micro_1m.immediate_reversal
 
-    # 1. EXTENDED
+    # 1. EXTENDED — price above upper BB or below lower BB
     if bb > config.BB_EXTENDED:
         if mom_dir == "bullish":
             return MarketContext(
@@ -70,13 +70,21 @@ def classify(state: MarketState) -> MarketContext:
                 rationale=f"Price extended (bb={bb:.2f}), bearish momentum overextended → avoid short",
                 suggested_action="avoid_short",
             )
-        # Symmetric: price below lower BB → avoid shorts (lower extension)
-        if bb < 0.0 and mom_dir == "bearish":
+    # Lower extension: price below lower BB
+    if bb < -config.BB_EXTENDED:
+        if mom_dir == "bearish":
             return MarketContext(
                 name="extended", direction_bias="neutral",
                 confidence=min(abs(bb) * 5 + 0.3, 0.95),
                 rationale=f"Price below lower BB (bb={bb:.2f}), bearish momentum overextended → avoid short",
                 suggested_action="avoid_short",
+            )
+        elif mom_dir == "bullish":
+            return MarketContext(
+                name="extended", direction_bias="neutral",
+                confidence=min(abs(bb) * 5 + 0.3, 0.95),
+                rationale=f"Price below lower BB (bb={bb:.2f}), bullish momentum overextended → avoid long",
+                suggested_action="avoid_long",
             )
 
     # 2. COMPRESSED — low volatility, no clear direction

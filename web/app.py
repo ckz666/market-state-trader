@@ -73,8 +73,10 @@ class StartRequest(BaseModel):
     interval: int = config.CYCLE_INTERVAL
 
 @app.post("/api/start")
-async def start_trader(req: StartRequest = StartRequest()):
+async def start_trader(req: StartRequest = None):
     global trader
+    if req is None:
+        req = StartRequest()
     if trader.running:
         return {"status": "already_running"}
     config.CYCLE_INTERVAL = req.interval
@@ -125,15 +127,10 @@ def get_analysis():
 def get_analysis_report():
     from analysis import full_report
     import io
+    from contextlib import redirect_stdout
     buf = io.StringIO()
-    # full_report writes to stdout; capture it
-    import sys
-    old_stdout = sys.stdout
-    sys.stdout = buf
-    try:
+    with redirect_stdout(buf):
         full_report("data/candidates.json")
-    finally:
-        sys.stdout = old_stdout
     return {"report": buf.getvalue()}
 
 

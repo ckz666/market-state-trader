@@ -78,7 +78,28 @@ class FuturesClient:
         try:
             ob = await self.fetch_order_book(symbol, limit=20)
             levels = ob.get("asks" if side == "buy" else "bids", [])
-            return est or {}
+            if not levels:
+                return {}
+            remaining = notional
+            fill_cost = 0.0
+            filled_qty = 0.0
+            for price, size in levels:
+                level_notional = price * size
+                if remaining <= level_notional:
+                    fill_cost += price * remaining
+                    filled_qty += remaining / price
+                    remaining = 0
+                    break
+                fill_cost += price * size
+                filled_qty += size
+                remaining -= level_notional
+            avg_price = fill_cost / filled_qty if filled_qty > 0 else 0.0
+            slippage = abs(avg_price - levels[0][0]) / levels[0][0] if levels else 0.0
+            return {
+                "avg_price": round(avg_price, 8),
+                "slippage": round(slippage, 6),
+                "fill_pct": round(1.0 - remaining / notional, 4) if notional > 0 else 1.0,
+            }
         except Exception:
             return {}
 

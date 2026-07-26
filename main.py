@@ -89,7 +89,7 @@ class MarketStateTrader:
                 self._log("INFO", f"Cycle {self.cycle_count} | ${self.live_price:,.2f}{pos_info}")
 
             # Only evaluate MarketState on NEW completed 1h candle
-            now = pd.Timestamp.now()
+            now = pd.Timestamp.utcnow()
             closed_1h = df_1h[df_1h.index + pd.Timedelta(hours=1) <= now]
             if len(closed_1h) < 2:
                 return
@@ -124,9 +124,9 @@ class MarketStateTrader:
             direction = "none"
             if decision.action.startswith("open_"):
                 direction = "long" if "long" in decision.action else "short"
-            elif context.direction_bias == "long" and decision.action != "hold":
+            elif context.direction_bias in ("long", "bullish") and decision.action != "hold":
                 direction = "long"
-            elif context.direction_bias == "short" and decision.action != "hold":
+            elif context.direction_bias in ("short", "bearish") and decision.action != "hold":
                 direction = "short"
 
             # Execute
@@ -154,8 +154,6 @@ class MarketStateTrader:
                 decision=decision.action, decision_reason=decision.reason,
                 market_state=state.to_dict(),
             ))
-            self.logger.update_outcomes(self.live_price)
-            self.paper.record_equity(self.live_price)
             self._log("INFO", f"[{context.name.upper()}] action={decision.action} conf={context.confidence:.2f}")
 
         except Exception as e:
