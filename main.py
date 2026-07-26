@@ -81,7 +81,7 @@ class MarketStateTrader:
             self.paper.record_equity(self.live_price)
 
             # Only evaluate MarketState on NEW completed 1h candle
-            now = pd.Timestamp.now(tz="UTC")
+            now = pd.Timestamp.now()
             closed_1h = df_1h[df_1h.index + pd.Timedelta(hours=1) <= now]
             if len(closed_1h) < 2:
                 return

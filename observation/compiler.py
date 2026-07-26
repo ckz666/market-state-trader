@@ -27,7 +27,7 @@ def compile(df_1h: pd.DataFrame, df_4h: pd.DataFrame,
         state_ts: Candle close timestamp for the state. Defaults to now().
     """
     if state_ts is None:
-        state_ts = pd.Timestamp.now(tz="UTC")
+        state_ts = pd.Timestamp.now()
 
     from indicators.ml_signal import get_indicators, detect_market_structure
 
