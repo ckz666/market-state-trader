@@ -222,13 +222,60 @@ class"):
   not yet in scope — only add it if the three-state split proves
   insufficient, not preemptively).
 
-## 11. Next step
+## 11. Recovery-state definition, frozen 2026-07-26
 
-Not code yet, but closer: Discovery work to define the "deep drawdown"
-threshold(s) and the "recovered" boundary for Class D', on 2020-2025 only,
-using the same MIN_CELL_N / descriptive discipline as v1-v4 — i.e. still
-measuring win-rate-by-state-bucket, not yet fitting or optimizing an exit
-action. Only after that empirical definition is frozen does an actual
-`scripts/phase_d_*.py` position-management mechanism get written, followed
-by a single, unmodified 2026 validation run — no iteration against 2026
-results.
+Based on `phase_d_recovery_state_discovery_v1.py`'s stability scan (§9's two
+open questions, now answered):
+
+- **Recovery definition: Def 1 — `DD_current(t) > deep_threshold`** (back
+  above the same threshold the trade dropped below). Chosen over Def 2
+  (margin from own low) and Def 3 (absolute residual) because it needs no
+  extra free parameter and already has the largest per-cell n of the three
+  — Def 3 separated states more sharply only because its stricter bar
+  shrinks the "recovered" group, not because it carries more information.
+- **Deep-drawdown threshold: −0.5% to −1.0%.** This is a range, not a single
+  fitted point — deliberately, since the discovery scan's whole purpose was
+  to show the 3-state ordering is stable across a band, not optimal at one
+  number. Below −0.5% the separation gets noisier (closer to the general
+  drawdown noise band); above −1.0% too many quintile/checkpoint cells drop
+  under `MIN_CELL_N`. Any single value from this band may be used for
+  implementation without that choice being a fitted parameter.
+- **Time checkpoints: 1h and later only** (1h/2h/3h). 15m/30m excluded —
+  the discovery scan's "ordering holds" flag was inconsistent there,
+  concentrated in cells with n just above the floor, most likely noise
+  from too little elapsed path rather than a real early-time effect. The
+  4h (terminal) checkpoint remains excluded per the pre-existing
+  `DD_current`-at-terminal degeneracy (§3 / v4's caveat on table A).
+- **Volatility Q1 explicitly unsupported.** At the −0.5%/−1.0% band and
+  1h+, Q1's diagnostic population is too thin to populate State 2/3 cells
+  (e.g. only n=6-13 recovered/impaired at 1h). The recovery-state mechanism
+  is frozen as **defined only for Q2-Q5**; Q1 is left out rather than
+  patched with a lower-n exception, and must not be silently included
+  later without its own dedicated check. This matters little in practice
+  since `decision_rule_v1` only ever trades Q5 — Q1 exists here purely as
+  part of the widened diagnostic population, not as a traded quintile.
+
+This is now a concrete, checkable definition (three states, one threshold
+band, one recovery rule, Q2-Q5, checkpoints 1h/2h/3h) — but still not a
+position-management action. Nothing here says what happens to a trade in
+State 3.
+
+## 12. Next step
+
+Two remaining steps before any real position-management mechanism exists:
+
+1. **Concretize on the actual traded population.** Everything so far
+   (discovery_v1's stability scan, this freeze) used the widened
+   LPL==Q1-across-all-quintiles diagnostic population. Q5 in that
+   population *is* `decision_rule_v1`'s actual trade set (LPL==Q1 &
+   Vol==Q5), so no separate re-check is structurally required — but the
+   next script should apply this exact frozen definition (not re-scan a
+   range) to that real trade set and report the outcome distribution
+   (n, win rate, median, mean, P05) per state per checkpoint, Discovery
+   only, as a single confirmatory descriptive step before moving on.
+2. **Only after that: design the execution-mechanic hypothesis** — what
+   actually happens to a trade classified into State 3 (exit? partial size
+   reduction? tightened remaining-time stop?). This is a new decision that
+   needs its own explicit, frozen hypothesis (same discipline as §2-§8
+   above, not decided here) before any code touches real position
+   management, and before 2026 is looked at again.
