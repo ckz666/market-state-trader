@@ -50,14 +50,17 @@ def build_vol_trade_dfs(cand_df, lpl_q, vol_q, price_history, sorted_ts) -> dict
     return out
 
 
-def section_table(period_name: str, vol_trade_dfs: dict) -> str:
-    lines = [f"### {period_name}\n"]
+def section_table(vol_trade_dfs: dict, col_prefix: str) -> str:
+    """col_prefix: 'mae' for running MAE-so-far (deepest excursion up to t),
+    'ret' for DD_current (unrealized return AT t itself, which may sit above
+    MAE-so-far if the trade has partially recovered by t)."""
+    lines = []
     lines.append("| Volatility | Time | " + " | ".join(f"<= {th*100:.1f}%" for th in DRAWDOWN_THRESHOLDS) + " |")
     lines.append("|---|---|" + "---|" * len(DRAWDOWN_THRESHOLDS))
     for vq in Q_LABELS:
         df = vol_trade_dfs[vq]
         for t_label in TIME_ROWS:
-            col = f"mae_{t_label}"
+            col = f"{col_prefix}_{t_label}"
             if df.empty or col not in df.columns:
                 row_cells = ["n/a"] * len(DRAWDOWN_THRESHOLDS)
             else:
@@ -107,7 +110,11 @@ def main():
                                           ("Validation (2026, out-of-sample)", val, val_lpl_q, val_vol_q)]:
         print(f"\n=== {name} ===")
         vol_trade_dfs = build_vol_trade_dfs(cand_df, lpl_q, vol_q, price_history, sorted_ts)
-        body += section_table(name, vol_trade_dfs) + "\n"
+        body += f"### {name}\n\n"
+        body += "#### A. Current drawdown (unrealized return AT t)\n\n"
+        body += section_table(vol_trade_dfs, col_prefix="ret") + "\n"
+        body += "#### B. MAE-so-far (deepest excursion reached BY t)\n\n"
+        body += section_table(vol_trade_dfs, col_prefix="mae") + "\n"
 
     header = (
         "# Phase C trade-path analysis v4 — Volatility x Time x Drawdown -> P(winner)\n\n"
@@ -116,9 +123,28 @@ def main():
         "management hypothesis (a separate, later, frozen-and-OOS-tested "
         "step — not built here). LPL==Q1 widened across all volatility "
         "quintiles, per v3's scope note (decision_rule_v1 itself only "
-        "fires at Volatility==Q5). Cells with n < {} are marked instead "
-        "of reported, per the same discipline used throughout this "
-        "project (v3's bb_position x vwap_distance sparse-cell lesson).\n\n"
+        "fires at Volatility==Q5), as a diagnostic — not a change to "
+        "decision_rule_v1.\n\n"
+        "Two parallel drawdown definitions, per the project discussion: "
+        "**A** is the unrealized return AT checkpoint t (`DD_current`, "
+        "which can sit above the deepest point already visited if the "
+        "trade has partially recovered by t); **B** is the running "
+        "minimum unrealized return from entry up to t (`MAE_so_far`, the "
+        "deepest excursion reached at any point up to t regardless of "
+        "where the trade sits exactly at t). A trade currently at -0.2% "
+        "that dipped to -1.5% earlier appears in B's <= -1.5% row but "
+        "not in A's. Cells with n < {} are marked instead of reported, "
+        "per the same discipline used throughout this project (v3's "
+        "bb_position x vwap_distance sparse-cell lesson).\n\n"
+        "**Caveat on A's 4h row:** at the terminal checkpoint, "
+        "`DD_current` is essentially the trade's final return (net of "
+        "fees), so \"current DD <= threshold at 4h\" is close to a "
+        "restatement of \"closed a loser\" rather than an independent "
+        "path observation — this is why every Q x 4h cell in table A "
+        "reads ~0%. Not a finding; a tautology of the checkpoint "
+        "coinciding with the exit. Table B does not have this problem, "
+        "since MAE-so-far can differ from the final return at any "
+        "checkpoint including the last.\n\n"
         "---\n\n".format(MIN_CELL_N)
     )
     full = header + "## Results\n\n" + body
