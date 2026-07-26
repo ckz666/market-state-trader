@@ -80,6 +80,14 @@ class MarketStateTrader:
             self.logger.update_outcomes(self.live_price)
             self.paper.record_equity(self.live_price)
 
+            # Heartbeat: log occasionally so the UI does not look dead
+            if self.cycle_count <= 3 or self.cycle_count % 30 == 0:
+                pos_info = ""
+                if self.paper.has_position:
+                    upnl = self.paper.position.unrealized_pnl(self.live_price)
+                    pos_info = f" | pos_upnl=${upnl:+.2f}"
+                self._log("INFO", f"Cycle {self.cycle_count} | ${self.live_price:,.2f}{pos_info}")
+
             # Only evaluate MarketState on NEW completed 1h candle
             now = pd.Timestamp.now()
             closed_1h = df_1h[df_1h.index + pd.Timedelta(hours=1) <= now]
