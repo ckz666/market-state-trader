@@ -1,0 +1,10 @@
+ccxt
+pandas
+numpy
+scipy
+ta
+aiohttp
+python-dotenv
+fastapi
+uvicorn[standard]
+pydantic

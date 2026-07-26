@@ -35,23 +35,22 @@ def _extract_nested(d, *keys, default=None):
     return d
 
 
-# Numeric dimensions to analyze (dot-path → label)
+# Numeric dimensions to analyze (dot-path into a candidate's market_state → label)
 NUMERIC_DIMS = {
-    "candle.body_ratio":            "Candle: Body Ratio",
-    "candle.upper_wick_ratio":      "Candle: Upper Wick",
-    "candle.lower_wick_ratio":      "Candle: Lower Wick",
-    "candle.close_location":        "Candle: Close Location",
-    "candle.range_expansion":       "Candle: Range Expansion",
-    "trend.strength":               "Trend: Strength",
-    "trend.adx":                    "Trend: ADX",
-    "momentum.strength":            "Momentum: Strength",
-    "momentum.rsi":                 "Momentum: RSI",
-    "volatility.prob_storm":        "Volatility: P(Storm)",
-    "volatility.atr_norm":          "Volatility: ATR norm",
-    "price_location.range_position_20": "Location: Range 20",
-    "price_location.bb_position":   "Location: BB Position",
-    "exhaustion.cycle_strength":    "Exhaustion: Cycle Strength",
-    "exhaustion.trend_momentum_divergence": "Exhaustion: T-M Divergence",
+    "micro_1m.body_ratio":               "Candle: Body Ratio",
+    "micro_1m.upper_wick_ratio":         "Candle: Upper Wick",
+    "micro_1m.lower_wick_ratio":         "Candle: Lower Wick",
+    "micro_1m.close_location":           "Candle: Close Location",
+    "state_1h.trend.strength":           "Trend: Strength",
+    "state_1h.trend.adx":                "Trend: ADX",
+    "state_1h.momentum.strength":        "Momentum: Strength",
+    "state_1h.momentum.rsi":             "Momentum: RSI",
+    "state_1h.volatility.prob_storm":    "Volatility: P(Storm)",
+    "state_1h.volatility.atr_norm":      "Volatility: ATR norm",
+    "state_1h.price_location.range_position_20": "Location: Range 20",
+    "state_1h.price_location.bb_position": "Location: BB Position",
+    "state_1h.exhaustion.cycle_strength": "Exhaustion: Cycle Strength",
+    "state_1h.exhaustion.trend_momentum_divergence": "Exhaustion: T-M Divergence",
 }
 
 

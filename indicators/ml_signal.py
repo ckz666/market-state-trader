@@ -1,12 +1,5 @@
 import numpy as np
 import pandas as pd
-import pickle
-import os
-from collections import Counter
-from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier, ExtraTreesClassifier
-from sklearn.metrics import balanced_accuracy_score, f1_score
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
 import ta
 
 from indicators.patterns import detect_patterns
@@ -14,57 +7,14 @@ from indicators.spectral_guard import rolling_cycle_strength
 from indicators.vol_regime import rolling_prob_storm
 
 
-MODEL_KEYS = ["gbm", "rf", "et"]
-
-
-def _tag(symbol: str) -> str:
-    return symbol.replace("/", "_").replace(":", "_")
-
-
-def _paths(symbol: str):
-    tag = _tag(symbol)
-    model_paths = {k: f"ai/model_{tag}_{k}.pkl" for k in MODEL_KEYS}
-    scaler_path  = f"ai/scaler_{tag}.pkl"
-    di_path      = f"ai/di_{tag}.pkl"          # DI Score training stats
-    return model_paths, scaler_path
-
-def _di_path(symbol: str) -> str:
-    return f"ai/di_{_tag(symbol)}.pkl"
-
-
-def _legacy_path(symbol: str):
-    """Old single-model path for backward compat."""
-    tag = _tag(symbol)
-    return f"ai/model_{tag}.pkl", f"ai/scaler_{tag}.pkl"
-
-
-def _funding_to_series(funding_records: list) -> pd.Series:
-    """Convert list of ccxt funding rate records to hourly pandas Series."""
-    if not funding_records:
-        return pd.Series(dtype=float)
-    rows = [(pd.Timestamp(r["timestamp"], unit="ms", tz="UTC"), r["fundingRate"]) for r in funding_records]
-    s = pd.Series({ts: rate for ts, rate in rows}).sort_index()
-    s.index = s.index.tz_localize(None)
-    return s.resample("1h").last().ffill()
-
-
 def cvd_zscore_from_ohlcv(df: pd.DataFrame, window: int = 100) -> pd.Series:
     """
-    Order-flow feature (2026-07-23, see project memory): rolling z-score of
-    cumulative taker buy/sell volume delta (CVD). Z-scored rather than used raw
-    because training data comes from Binance klines (taker_buy_volume column,
-    full 200+ day history) while live inference has to use Bitget's own CVD
-    (FuturesClient.fetch_cvd() — a live snapshot ratio from the last N fills, no
-    history). Those two sources aren't comparable in raw scale/methodology
-    (different exchanges, different volume populations, fixed-hour-bucket vs.
-    fixed-trade-count), but a window-relative z-score expresses the same
-    structural signal (bullish/bearish taker pressure relative to its own recent
-    context) in both, the same way funding_norm already bridges Binance-trained /
-    Bitget-live funding rate data.
-    df must have a 'taker_buy_volume' column (see fetch_ohlcv_binance(...,
-    include_taker_volume=True)) and 'volume'. Returns NaN before `window` bars
-    of history exist — build_features() fills that as neutral (0.0), same
-    convention as the rest of the warmup handling in this module.
+    Order-flow feature: rolling z-score of cumulative taker buy/sell volume
+    delta (CVD). df must have a 'taker_buy_volume' column and 'volume'.
+    Bitget OHLCV has no taker_buy_volume column, so this no-ops to a neutral
+    0.0 series for every caller in this repo until one opts into a source
+    that provides it. Returns NaN before `window` bars of history exist —
+    build_features() fills that as neutral (0.0).
     """
     if "taker_buy_volume" not in df.columns:
         return pd.Series(0.0, index=df.index)
@@ -77,21 +27,15 @@ def cvd_zscore_from_ohlcv(df: pd.DataFrame, window: int = 100) -> pd.Series:
 
 def taker_ratio_zscore_from_ohlcv(df: pd.DataFrame, window: int = 100) -> pd.Series:
     """
-    Second order-flow feature (2026-07-23, DeepSeek follow-up round, see
-    project memory), deliberately NOT the same signal as cvd_zscore despite
-    sharing a data source: this is a rolling z-score of the PER-BAR taker
-    buy ratio (buy_volume / total_volume, bounded [0,1], mean-reverting
-    around ~0.5) — an instantaneous pressure reading. cvd_zscore above is a
-    z-score of the CUMULATIVE running sum of buy-minus-sell volume — a
-    trend-following, unbounded quantity. Same underlying trade tape, two
-    structurally different signals (snapshot vs. accumulated drift).
-
-    On the LIVE side (trading/autotrader.py) this distinction only holds if
-    the ring buffers actually track different things — cvd_ratio_buffer was
-    fixed alongside this feature to accumulate cvd_net (true running delta)
-    instead of ring-buffering the raw ratio, specifically so this feature
-    and cvd_zscore stay non-redundant in production too, not just in
-    training. See _run_symbol's CVD/taker-ratio ring buffer comments.
+    Second order-flow feature, deliberately NOT the same signal as
+    cvd_zscore despite sharing a data source: this is a rolling z-score of
+    the PER-BAR taker buy ratio (buy_volume / total_volume, bounded [0,1],
+    mean-reverting around ~0.5) — an instantaneous pressure reading.
+    cvd_zscore above is a z-score of the CUMULATIVE running sum of
+    buy-minus-sell volume — a trend-following, unbounded quantity. Same
+    underlying trade tape, two structurally different signals (snapshot vs.
+    accumulated drift). Like cvd_zscore, no-ops to neutral 0.0 without a
+    'taker_buy_volume' column, which Bitget OHLCV doesn't provide.
     """
     if "taker_buy_volume" not in df.columns:
         return pd.Series(0.0, index=df.index)
@@ -158,7 +102,7 @@ def _resample_htf_indicators(df: pd.DataFrame, rule: str) -> pd.DataFrame:
     # past the end of the series instead of returning NaN — verified empirically,
     # not documented. Callers with a small df (e.g. Grid's fetch) would otherwise crash here.
     if len(htf) < 30:
-        empty_idx = pd.DatetimeIndex([], name=df.index.name)
+        empty_idx = df.index[:0]
         return pd.DataFrame({"rsi": pd.Series(dtype=float, index=empty_idx),
                               "adx": pd.Series(dtype=float, index=empty_idx),
                               "ema_cross_norm": pd.Series(dtype=float, index=empty_idx),
@@ -204,17 +148,14 @@ def build_features(df: pd.DataFrame, funding_series: pd.Series = None,
     Both are strictly causal with a fixed trailing lookback, so a value for a given
     timestamp is identical whether computed on the full history or on a window ending
     at that timestamp — safe to reindex from a precomputed series instead of recomputing.
-    Backtest-only optimisation (see ai/backtest.py): recomputing these from scratch on
-    every sliding test-window is the dominant cost in a walk-forward run. Live callers
-    never pass these, so behaviour there is unchanged.
+    Nothing in this repo currently passes these; they're accepted as optional
+    reindex-from-precomputed hooks for callers that recompute build_features()
+    repeatedly over sliding windows (e.g. a future backtest/walk-forward tool).
 
-    precomputed_cvd_zscore: optional aligned series, see cvd_zscore_from_ohlcv(). Live
-    callers pass their own ring-buffer-based z-score here (df has no taker_buy_volume
-    column from Bitget) — when omitted, falls back to computing it from df directly,
-    which itself no-ops to neutral 0.0 if df lacks a taker_buy_volume column (true for
-    every caller that hasn't opted into fetch_ohlcv_binance(..., include_taker_volume=True)
-    or an explicit live z-score, i.e. everyone as of 2026-07-23 — feature is wired but
-    inert until a caller actually opts in, see project memory).
+    precomputed_cvd_zscore / precomputed_taker_ratio_zscore: see
+    cvd_zscore_from_ohlcv() / taker_ratio_zscore_from_ohlcv() — both no-op to
+    neutral 0.0 when df lacks a 'taker_buy_volume' column, which is true for
+    every live caller in this repo (Bitget OHLCV doesn't include it).
     """
     f = pd.DataFrame(index=df.index)
 
@@ -318,335 +259,6 @@ def build_features(df: pd.DataFrame, funding_series: pd.Series = None,
     f = f.replace([np.inf, -np.inf], np.nan)
 
     return f
-
-
-def make_labels(df: pd.DataFrame, horizon: int = 3, threshold: float = None) -> pd.Series:
-    """1=buy, -1=sell, 0=hold based on future returns.
-    If threshold is None, uses ATR-adaptive threshold (0.8x ATR) so labels
-    reflect meaningful moves relative to current volatility — not fixed noise.
-    """
-    future_return = df["close"].shift(-horizon) / df["close"] - 1
-    if threshold is None:
-        # ATR over 14 periods, normalised by close → volatility-relative threshold
-        high_low  = df["high"] - df["low"]
-        high_prev = (df["high"] - df["close"].shift(1)).abs()
-        low_prev  = (df["low"]  - df["close"].shift(1)).abs()
-        tr  = pd.concat([high_low, high_prev, low_prev], axis=1).max(axis=1)
-        atr = tr.rolling(14).mean()
-        thr = (atr / df["close"]) * 0.8   # 80% of one ATR — filters out noise
-        thr = thr.clip(lower=0.004, upper=0.03)   # min 0.4%, max 3%
-    else:
-        thr = threshold
-    labels = pd.Series(0, index=df.index)
-    labels[future_return > thr] = 1
-    labels[future_return < -thr] = -1
-    return labels
-
-
-_train_progress: dict[str, int] = {}
-
-
-def train(df: pd.DataFrame, symbol: str = "BTC/USDT",
-          n_estimators: int = 200, progress_cb=None,
-          funding_series: pd.Series = None) -> dict:
-    """
-    Train ensemble of 3 models (GBM warm_start + RF + ExtraTrees).
-    Progress: GBM batches 20/40/60%, RF 80%, ET 100%.
-    """
-    model_paths, scaler_path = _paths(symbol)
-    features = build_features(df, funding_series=funding_series)
-    labels   = make_labels(df)
-
-    valid = features.dropna().index.intersection(labels.dropna().index)
-    if len(valid) <= 3:
-        raise ValueError(
-            f"not enough valid rows to train {symbol} ({len(valid)} after dropna/warmup) "
-            f"— need more history (raise the candle limit)"
-        )
-    valid = valid[:-3]
-    X = features.loc[valid]
-    y = labels.loc[valid]
-
-    # ── Outlier removal (IQR-based, threshold scales with how much data we have —
-    # plenty of samples → filter harder; scarce samples → be lenient, we can't
-    # afford to throw away rows a thin-history symbol doesn't have to spare) ──
-    iqr_mult = 4.5 if len(X) >= 300 else 7.0
-    q1 = X.quantile(0.25); q3 = X.quantile(0.75); iqr = q3 - q1
-    mask = ~((X < (q1 - iqr_mult * iqr)) | (X > (q3 + iqr_mult * iqr))).any(axis=1)
-    X = X[mask]; y = y[mask]
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
-
-    scaler = StandardScaler()
-    X_train_s = scaler.fit_transform(X_train)
-    X_test_s  = scaler.transform(X_test)
-
-    # ── DI Score: FreqAI-style pairwise distance approach ────────────────────────
-    # Save training matrix + avg pairwise dist so predict can compare.
-    # DI = min_distance(x_pred, X_train) / avg_pairwise_train_dist
-    # DI > threshold → regime shift outside training distribution → HOLD
-    from sklearn.metrics import pairwise_distances as _pw
-    pw_dists = _pw(X_train_s)           # (n, n) euclidean
-    np.fill_diagonal(pw_dists, np.nan)
-    avg_mean_dist = float(np.nanmean(pw_dists))
-    di_stats = {
-        "X_train": X_train_s,           # saved for min-distance lookup at predict time
-        "avg_mean_dist": avg_mean_dist,
-        "cols": list(X_train.columns),
-    }
-    os.makedirs("ai", exist_ok=True)
-    with open(_di_path(symbol), "wb") as fh: pickle.dump(di_stats, fh)
-
-    _train_progress[symbol] = 0
-
-    # ── sample weights: class balancing × temporal recency (FreqAI wfactor) ──────
-    # w_i = exp(-i / (wfactor * N))[::-1] → newest sample has highest weight
-    # wfactor=0.9 → newest ~2.95x more weight than oldest
-    #
-    # Class weight is a fixed, mild ratio (not full inverse-frequency "balanced")
-    # — calibrated 2026-07-22 against BTC/USDT: full balanced weighting made the
-    # ensemble fire a directional call on ~53% of bars at ~19% precision (barely
-    # above the ~17.5% floor of guessing buy/sell blind). A dir_weight of ~2.2
-    # trades some of that fire-rate away for real precision (~26% at ~4% fire
-    # rate) — a genuine, if modest, precision/recall tradeoff, unlike raising
-    # the confidence threshold alone (confirmed flat/uninformative from 0-40%
-    # confidence — see ai/vol_regime.py-adjacent session notes). Probability
-    # calibration (isotonic and sigmoid) was tried and rejected: both collapsed
-    # to always-predicting hold, meaning honestly calibrated the base models
-    # have little real confidence left over for buy/sell once shrunk — that's
-    # the ceiling of this feature set/horizon, not a bug to calibrate away.
-    CLASS_WEIGHT = {0: 1.0, 1: 2.2, -1: 2.2}
-    class_w = np.array([CLASS_WEIGHT[c] for c in y_train])
-    n = len(y_train)
-    # Less temporal decay for small datasets — avoids overfitting to recent regime
-    wfactor = 0.9 if n >= 400 else 0.4
-    time_w  = np.exp(-np.arange(n) / (wfactor * n))[::-1]
-    sw = class_w * time_w
-    sw /= sw.mean()
-
-    # ── GBM with warm_start (batched for progress reporting) ──────────────────
-    batch = max(n_estimators // 3, 40)
-    gbm = GradientBoostingClassifier(
-        n_estimators=batch, max_depth=4,
-        learning_rate=0.05, random_state=42, warm_start=True,
-    )
-    gbm.fit(X_train_s, y_train, sample_weight=sw)
-    _train_progress[symbol] = 20
-    if progress_cb: progress_cb(20)
-    for step in range(1, 3):
-        gbm.n_estimators += batch
-        gbm.fit(X_train_s, y_train, sample_weight=sw)
-        pct = 20 + step * 20
-        _train_progress[symbol] = pct
-        if progress_cb: progress_cb(pct)
-
-    # ── Random Forest ─────────────────────────────────────────────────────────
-    rf = RandomForestClassifier(
-        n_estimators=n_estimators, max_depth=10,
-        min_samples_leaf=3, random_state=42, n_jobs=-1,
-        class_weight=CLASS_WEIGHT,
-    )
-    rf.fit(X_train_s, y_train)
-    _train_progress[symbol] = 80
-    if progress_cb: progress_cb(80)
-
-    # ── Extra Trees ───────────────────────────────────────────────────────────
-    et = ExtraTreesClassifier(
-        n_estimators=n_estimators, max_depth=10,
-        min_samples_leaf=3, random_state=42, n_jobs=-1,
-        class_weight=CLASS_WEIGHT,
-    )
-    et.fit(X_train_s, y_train)
-    _train_progress[symbol] = 100
-    if progress_cb: progress_cb(100)
-
-    # ── Ensemble evaluation ───────────────────────────────────────────────────
-    votes = np.array([gbm.predict(X_test_s), rf.predict(X_test_s), et.predict(X_test_s)])
-    ensemble_preds = np.array([Counter(votes[:, i]).most_common(1)[0][0] for i in range(votes.shape[1])])
-
-    # balanced_accuracy weights each class equally → not fooled by hold-majority
-    bal_acc = float(balanced_accuracy_score(y_test.values, ensemble_preds))
-    raw_acc = float(np.mean(ensemble_preds == y_test.values))
-    f1_mac  = float(f1_score(y_test.values, ensemble_preds, average="macro", zero_division=0))
-
-    # directional precision: of all buy/sell predictions, how often correct?
-    dir_mask = ensemble_preds != 0
-    dir_precision = float(np.mean(ensemble_preds[dir_mask] == y_test.values[dir_mask])) if dir_mask.any() else 0.0
-
-    os.makedirs("ai", exist_ok=True)
-    for key, model in [("gbm", gbm), ("rf", rf), ("et", et)]:
-        with open(model_paths[key], "wb") as f: pickle.dump(model, f)
-    with open(scaler_path, "wb") as f: pickle.dump(scaler, f)
-
-    return {
-        "symbol":         symbol,
-        "accuracy":       round(bal_acc, 3),     # balanced — the real metric
-        "raw_accuracy":   round(raw_acc, 3),      # kept for reference
-        "f1_macro":       round(f1_mac, 3),
-        "dir_precision":  round(dir_precision, 3),
-        "samples":        len(X_train),
-        "features":       list(X.columns),
-        "models":         ["GBM", "RF", "ExtraTrees"],
-    }
-
-
-def predict(df: pd.DataFrame, symbol: str = "BTC/USDT",
-            funding_series: pd.Series = None, features: pd.DataFrame = None) -> dict:
-    """
-    Ensemble vote from 3 models. Falls back to legacy single model if needed.
-    `features`: optional pre-computed build_features(df, funding_series) result, see
-    get_indicators() docstring — skips the internal recomputation when supplied.
-    """
-    model_paths, scaler_path = _paths(symbol)
-
-    # Try ensemble first
-    if all(os.path.exists(p) for p in model_paths.values()) and os.path.exists(scaler_path):
-        return _predict_ensemble(df, model_paths, scaler_path, funding_series=funding_series,
-                                  symbol=symbol, features=features)
-
-    # Fallback to old single-model
-    legacy_model, legacy_scaler = _legacy_path(symbol)
-    if os.path.exists(legacy_model) and os.path.exists(legacy_scaler):
-        return _predict_single(df, legacy_model, legacy_scaler)
-
-    return {"signal": 0, "confidence": 0.0, "label": "hold", "trained": False, "agreement": 0.0}
-
-
-def _compute_di(X_scaled: np.ndarray, symbol: str) -> float:
-    """
-    FreqAI-style DI Score: min euclidean distance from current features to any training sample,
-    normalised by average pairwise distance within training set.
-    DI > 1.0 = current bar is farther from training data than training points are from each other.
-    """
-    path = _di_path(symbol)
-    if not os.path.exists(path):
-        return 0.0
-    with open(path, "rb") as fh:
-        stats = pickle.load(fh)
-    X_train = stats.get("X_train")
-    avg_dist = stats.get("avg_mean_dist", 1.0)
-    if X_train is None or X_scaled.shape[1] != X_train.shape[1] or avg_dist == 0:
-        return 0.0
-    from sklearn.metrics import pairwise_distances as _pw
-    dists = _pw(X_train, X_scaled)   # (n_train, 1)
-    min_dist = float(dists.min())
-    return min_dist / avg_dist
-
-
-def _predict_ensemble(df: pd.DataFrame, model_paths: dict, scaler_path: str,
-                      funding_series: pd.Series = None, symbol: str = "",
-                      features: pd.DataFrame = None) -> dict:
-    models = {}
-    for key, path in model_paths.items():
-        with open(path, "rb") as f: models[key] = pickle.load(f)
-    with open(scaler_path, "rb") as f: scaler = pickle.load(f)
-
-    if features is None:
-        features = build_features(df, funding_series=funding_series)
-    last = features.iloc[[-1]].dropna(axis=1)
-    expected_cols = scaler.feature_names_in_
-    for col in expected_cols:
-        if col not in last.columns:
-            last[col] = 0.0
-    last = last[expected_cols]
-    X = scaler.transform(last)
-
-    # ── DI Score: if market regime is too far from training → force HOLD ────────
-    # Threshold scales with sample count: few samples → DI metric is noisy → be lenient
-    _n_samples = 0
-    _di_path_check = _di_path(symbol)
-    if os.path.exists(_di_path_check):
-        import pickle as _pkl
-        with open(_di_path_check, "rb") as _fh:
-            _xt = _pkl.load(_fh).get("X_train")
-            if _xt is not None:
-                _n_samples = _xt.shape[0]
-    if _n_samples < 300:
-        DI_THRESHOLD = 25.0   # too few samples to trust DI → very lenient
-    elif _n_samples < 600:
-        DI_THRESHOLD = 5.0    # moderate
-    else:
-        DI_THRESHOLD = 2.0    # well-trained model → strict
-    di_score = _compute_di(X, symbol)
-    if di_score > DI_THRESHOLD:
-        return {
-            "signal": 0, "confidence": 0.0, "label": "hold",
-            "trained": True, "agreement": 0.0,
-            "di_score": round(di_score, 3),
-            "di_blocked": True,
-            "reason": f"DI={di_score:.2f} > {DI_THRESHOLD} — Regime-Shift erkannt, kein Trade",
-        }
-
-    votes = []
-    probas = []
-    for m in models.values():
-        v = int(m.predict(X)[0])
-        p = m.predict_proba(X)[0]
-        # Ensure 3-class probability order: [-1, 0, 1]
-        class_order = list(m.classes_)
-        p_aligned = [0.0, 0.0, 0.0]  # [sell, hold, buy]
-        for cls_i, cls_val in enumerate(class_order):
-            if cls_val == -1: p_aligned[0] = p[cls_i]
-            elif cls_val == 0: p_aligned[1] = p[cls_i]
-            elif cls_val == 1: p_aligned[2] = p[cls_i]
-        votes.append(v)
-        probas.append(p_aligned)
-
-    cnt = Counter(votes)
-    avg_proba = np.mean(probas, axis=0)
-
-    # Use probability argmax as signal — more robust than majority vote when
-    # models are hold-biased due to class imbalance in training data.
-    signal = [-1, 0, 1][int(np.argmax(avg_proba))]
-    agreement = cnt.get(signal, 0) / len(votes)
-
-    # Confidence = max avg probability * agreement-factor
-    confidence = float(max(avg_proba)) * (0.6 + 0.4 * agreement)
-
-    label_map = {1: "buy", -1: "sell", 0: "hold"}
-    return {
-        "signal": signal,
-        "confidence": round(confidence, 3),
-        "label": label_map.get(signal, "hold"),
-        "trained": True,
-        "agreement": round(agreement, 2),
-        "di_score": round(di_score, 3),
-        "di_blocked": False,
-        "votes": {"gbm": label_map.get(votes[0]), "rf": label_map.get(votes[1]), "et": label_map.get(votes[2])},
-        "probabilities": {
-            "sell": round(float(avg_proba[0]), 3),
-            "hold": round(float(avg_proba[1]), 3),
-            "buy":  round(float(avg_proba[2]), 3),
-        },
-    }
-
-
-def _predict_single(df: pd.DataFrame, model_path: str, scaler_path: str) -> dict:
-    with open(model_path,  "rb") as f: model  = pickle.load(f)
-    with open(scaler_path, "rb") as f: scaler = pickle.load(f)
-    features = build_features(df)
-    last = features.iloc[[-1]].dropna(axis=1)
-    expected_cols = scaler.feature_names_in_
-    for col in expected_cols:
-        if col not in last.columns: last[col] = 0.0
-    last = last[expected_cols]
-    X = scaler.transform(last)
-    signal = int(model.predict(X)[0])
-    proba  = model.predict_proba(X)[0]
-    confidence = float(max(proba))
-    label_map = {1: "buy", -1: "sell", 0: "hold"}
-    return {
-        "signal": signal,
-        "confidence": round(confidence, 3),
-        "label": label_map.get(signal, "hold"),
-        "trained": True,
-        "agreement": 1.0,
-        "probabilities": {
-            "sell": round(float(proba[0]), 3),
-            "hold": round(float(proba[1]), 3),
-            "buy":  round(float(proba[2]), 3),
-        },
-    }
 
 
 def detect_market_structure(df: pd.DataFrame, n: int = 5, min_swing_atr: float = 0.5) -> dict:

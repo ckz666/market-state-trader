@@ -254,14 +254,16 @@ function updateChart(ohlcv){
 function renderState(st){
   if(!st)return;
   const el=document.getElementById('state-detail');
+  const h1=st.state_1h||{}, trend=h1.trend||{}, momentum=h1.momentum||{}, volatility=h1.volatility||{},
+        priceLoc=h1.price_location||{}, exhaustion=h1.exhaustion||{}, ctx4h=st.context_4h||{}, micro=st.micro_1m||{};
   const b=[
-    ['Candle',[['Dir',st.candle?.direction],['Body',fmtNum(st.candle?.body_ratio,3)],['UpWick',fmtNum(st.candle?.upper_wick_ratio,3)],['DnWick',fmtNum(st.candle?.lower_wick_ratio,3)],['CloseLoc',fmtNum(st.candle?.close_location,3)],['RangeExp',fmtNum(st.candle?.range_expansion,2)]]],
-    ['Trend',[['Dir',st.trend?.direction],['Strength',fmtNum(st.trend?.strength,3)],['ADX',fmtNum(st.trend?.adx,1)],['1D',st.trend?.daily_alignment],['4H',st.trend?.structure_alignment]]],
-    ['Momentum',[['Dir',st.momentum?.direction],['Strength',fmtNum(st.momentum?.strength,3)],['Accel',fmtNum(st.momentum?.acceleration,3)],['RSI',fmtNum(st.momentum?.rsi,1)],['Sqz',st.momentum?.squeeze_fired?'YES':'no']]],
-    ['Volatility',[['Regime',st.volatility?.regime],['P(Storm)',fmtNum(st.volatility?.prob_storm,3)],['ATR',fmtNum(st.volatility?.atr_norm,5)],['Risk',fmtNum(st.volatility?.continuous_risk_multiplier,3)]]],
-    ['Price Loc',[['R20',fmtNum(st.price_location?.range_position_20,3)],['R50',fmtNum(st.price_location?.range_position_50,3)],['BB',fmtNum(st.price_location?.bb_position,3)],['VWAP',fmtNum(st.price_location?.vwap_distance,4)]]],
-    ['Structure',[['Trend',st.structure?.trend_label],['HH',st.structure?.hh?'✓':'--'],['HL',st.structure?.hl?'✓':'--'],['LH',st.structure?.lh?'✓':'--'],['LL',st.structure?.ll?'✓':'--']]],
-    ['Exhaustion',[['Cycle',fmtNum(st.exhaustion?.cycle_strength,3)],['UpRej',fmtNum(st.exhaustion?.upper_rejection,3)],['DnRej',fmtNum(st.exhaustion?.lower_rejection,3)],['T-M Div',fmtNum(st.exhaustion?.trend_momentum_divergence,2)]]]
+    ['Candle',[['Dir',micro.candle_direction],['Body',fmtNum(micro.body_ratio,3)],['UpWick',fmtNum(micro.upper_wick_ratio,3)],['DnWick',fmtNum(micro.lower_wick_ratio,3)],['CloseLoc',fmtNum(micro.close_location,3)]]],
+    ['Trend',[['Dir',trend.direction],['Strength',fmtNum(trend.strength,3)],['ADX',fmtNum(trend.adx,1)],['EMA X',fmtNum(trend.ema_cross_norm,4)]]],
+    ['Momentum',[['Dir',momentum.direction],['Strength',fmtNum(momentum.strength,3)],['Accel',fmtNum(momentum.acceleration,3)],['RSI',fmtNum(momentum.rsi,1)],['Sqz',momentum.squeeze_fired?'YES':'no']]],
+    ['Volatility',[['Regime',volatility.regime],['P(Storm)',fmtNum(volatility.prob_storm,3)],['ATR',fmtNum(volatility.atr_norm,5)]]],
+    ['Price Loc',[['R20',fmtNum(priceLoc.range_position_20,3)],['R50',fmtNum(priceLoc.range_position_50,3)],['BB',fmtNum(priceLoc.bb_position,3)],['VWAP',fmtNum(priceLoc.vwap_distance,4)]]],
+    ['Structure',[['Trend',ctx4h.structure_trend],['HH',ctx4h.hh?'✓':'--'],['HL',ctx4h.hl?'✓':'--'],['LH',ctx4h.lh?'✓':'--'],['LL',ctx4h.ll?'✓':'--']]],
+    ['Exhaustion',[['Cycle',fmtNum(exhaustion.cycle_strength,3)],['UpRej',fmtNum(exhaustion.upper_rejection,3)],['DnRej',fmtNum(exhaustion.lower_rejection,3)],['T-M Div',fmtNum(exhaustion.trend_momentum_divergence,2)]]]
   ];
   el.innerHTML=b.map(([t,r])=>`<div class="sb"><div class="t">${t}</div>${r.map(([l,v])=>`<div class="r"><span>${l}</span><span class="v">${v||'--'}</span></div>`).join('')}</div>`).join('');
 }
