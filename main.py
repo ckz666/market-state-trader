@@ -38,6 +38,7 @@ class MarketStateTrader:
         self._last_state_ts = self._restore_last_state_ts()
         self.ohlcv_cache: dict = {"1m": [], "15m": [], "1h": [], "4h": []}
         self.price_history: dict[int, float] = {}  # 1m close ts_ms -> price, for exact outcome lookups
+        self._last_heartbeat_price = None
 
     def _restore_last_state_ts(self):
         if not self.logger.candidates:
@@ -101,16 +102,30 @@ class MarketStateTrader:
                 self._log("TRADE", f"{trigger.upper()} @ ${self.live_price:,.2f} | PnL: ${record['pnl']:+.2f}")
 
             # ALWAYS update outcomes and equity
-            self.logger.update_outcomes(self.price_history)
+            outcomes = self.logger.update_outcomes(self.price_history)
+            if outcomes["filled"]:
+                parts = ", ".join(
+                    f"{f['window']}={f['return']*100:+.2f}% (state {f['state_ts'][11:16]})"
+                    for f in outcomes["filled"]
+                )
+                self._log("INFO", f"Outcome(s) measured: {parts}")
+            if outcomes["fresh_misses"]:
+                self._log("WARN", f"{outcomes['fresh_misses']} outcome(s) missed their exact target "
+                                   f"time — no 1m price within {self.logger.OUTCOME_TOLERANCE_SEC}s tolerance")
             self.paper.record_equity(self.live_price)
 
-            # Heartbeat: log occasionally so the UI does not look dead
-            if self.cycle_count <= 3 or self.cycle_count % 30 == 0:
+            # Heartbeat: log every few cycles so the UI does not look dead
+            if self.cycle_count <= 3 or self.cycle_count % 5 == 0:
                 pos_info = ""
                 if self.paper.has_position:
                     upnl = self.paper.position.unrealized_pnl(self.live_price)
                     pos_info = f" | pos_upnl=${upnl:+.2f}"
-                self._log("INFO", f"Cycle {self.cycle_count} | ${self.live_price:,.2f}{pos_info}")
+                delta_info = ""
+                if self._last_heartbeat_price:
+                    dpct = (self.live_price - self._last_heartbeat_price) / self._last_heartbeat_price * 100
+                    delta_info = f" ({dpct:+.2f}%)"
+                self._last_heartbeat_price = self.live_price
+                self._log("INFO", f"Cycle {self.cycle_count} | ${self.live_price:,.2f}{delta_info}{pos_info}")
 
             # Only evaluate MarketState on NEW completed 1h candle
             closed_1h = df_1h[df_1h.index + pd.Timedelta(hours=1) <= now]
@@ -180,7 +195,8 @@ class MarketStateTrader:
                 decision=decision.action, decision_reason=decision.reason,
                 market_state=state.to_dict(),
             ))
-            self._log("INFO", f"[{context.name.upper()}] action={decision.action} conf={context.confidence:.2f}")
+            self._log("INFO", f"1h candle closed @ ${state.ohlcv['close']:,.2f} (exec ${self.live_price:,.2f}) "
+                               f"→ [{context.name.upper()}] {decision.action} conf={context.confidence:.2f}")
 
         except Exception as e:
             self._log("ERROR", f"Cycle: {e}")
@@ -188,7 +204,9 @@ class MarketStateTrader:
 
     async def loop(self):
         self.running = True
-        self._log("INFO", f"Trader started — {config.SYMBOL} | TFs: 1m,15m,1h,4h | eval on 1h close")
+        resume_info = f" | resuming after state {self._last_state_ts.isoformat()}" if self._last_state_ts is not None else ""
+        self._log("INFO", f"Trader started — {config.SYMBOL} | TFs: 1m,15m,1h,4h | eval on 1h close"
+                           f" | {len(self.logger.candidates)} candidates loaded{resume_info}")
         try:
             async with ExchangeClient() as client:
                 while self.running:

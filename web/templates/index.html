@@ -112,8 +112,8 @@ button:disabled{opacity:.35;cursor:not-allowed;transform:none;box-shadow:none}
 canvas#chart{width:100%;height:230px;display:block;border-radius:8px;cursor:crosshair}
 
 /* ── Log & tables ── */
-.log{max-height:130px;overflow-y:auto;font-family:var(--mono);font-size:.65rem;line-height:1.6}
-.log .INFO{color:var(--muted)}.log .TRADE{color:var(--accent);font-weight:600}.log .ERROR{color:var(--red)}
+.log{max-height:180px;overflow-y:auto;font-family:var(--mono);font-size:.65rem;line-height:1.6}
+.log .INFO{color:var(--muted)}.log .TRADE{color:var(--accent);font-weight:600}.log .ERROR{color:var(--red)}.log .WARN{color:var(--yellow)}
 table{width:100%;border-collapse:collapse;font-size:.66rem;margin-top:2px}
 th{text-align:left;padding:3px 5px;border-bottom:1px solid var(--border);color:var(--muted);font-size:.57rem;text-transform:uppercase;letter-spacing:.03em}
 td{padding:2.5px 5px;border-bottom:1px dashed var(--border);font-family:var(--mono)}
@@ -326,7 +326,7 @@ function render(s){
   document.getElementById('trade-history').innerHTML=th||'<div class="muted">No trades yet</div>';
 
   renderState(s.state);
-  fetch('/api/log?limit=18').then(r=>r.json()).then(entries=>{
+  fetch('/api/log?limit=30').then(r=>r.json()).then(entries=>{
     document.getElementById('log').innerHTML=entries.map(e=>
       `<div class="${e.level}">[${(e.ts||'').substring(11,19)}] <b>${e.level}</b> ${e.msg}</div>`
     ).join('')||'<div class="muted">No entries</div>';

@@ -40,14 +40,23 @@ class Candidate:
 class CandidateLogger:
     OUTCOME_WINDOWS = {"15m": 15*60, "30m": 30*60, "1h": 60*60, "4h": 4*60*60}
 
+    # One candidate per closed 1h candle → ~8760/year. 50,000 is ~5.7 years of
+    # runway before the oldest candidates start rolling off — comfortably past
+    # any realistic length of the data-collection phase, while keeping
+    # candidates.json bounded (a few hundred MB at worst) instead of growing
+    # forever. Both the in-memory list and the persisted file share this cap;
+    # previously the file was capped at a much smaller 2000 regardless of this
+    # constant, silently losing everything older than ~83 days.
+    MAX_CANDIDATES = 50_000
+
     def __init__(self):
         self.candidates: list[Candidate] = []
         self._load()
 
     def add(self, c: Candidate):
         self.candidates.append(c)
-        if len(self.candidates) > 5000:
-            self.candidates = self.candidates[-5000:]
+        if len(self.candidates) > self.MAX_CANDIDATES:
+            self.candidates = self.candidates[-self.MAX_CANDIDATES:]
         self._save()
 
     # How close a 1m close has to be to the exact target timestamp to count
@@ -55,20 +64,33 @@ class CandidateLogger:
     # later price (e.g. after the bot was offline) and mislabeling it.
     OUTCOME_TOLERANCE_SEC = 120
 
-    def update_outcomes(self, price_history: dict):
+    # A miss only gets reported to the caller (for a log line) within this
+    # many seconds of its target time — an old, still-pending miss from hours
+    # ago would otherwise get re-reported every single cycle forever.
+    FRESH_MISS_WINDOW_SEC = 5 * 60
+
+    def update_outcomes(self, price_history: dict) -> dict:
         """price_history: {ts_ms: close_price} of 1m candles, e.g.
         MarketStateTrader.price_history. Measures each forward return at the
         exact target timestamp (state time + window) using the closest 1m
         close within OUTCOME_TOLERANCE_SEC — not "whatever price is live
         when the bot happens to check", which drifts with cycle timing and
         breaks entirely across downtime.
+
+        Returns {"filled": [...], "fresh_misses": int} so the caller can log
+        it — "filled" lists the returns just measured this call, "fresh_misses"
+        counts targets whose time just passed with no 1m data close enough to
+        trust (see FRESH_MISS_WINDOW_SEC), a live data-quality signal.
         """
+        filled: list[dict] = []
+        fresh_misses = 0
         if not price_history:
-            return
+            return {"filled": filled, "fresh_misses": fresh_misses}
         sorted_ts = sorted(price_history.keys())
         now = datetime.now(timezone.utc)
         now_ms = int(now.timestamp() * 1000)
         tolerance_ms = self.OUTCOME_TOLERANCE_SEC * 1000
+        fresh_ms = self.FRESH_MISS_WINDOW_SEC * 1000
         changed = False
         for c in self.candidates:
             try:
@@ -87,6 +109,8 @@ class CandidateLogger:
                     continue  # target time hasn't happened yet
                 idx = bisect.bisect_left(sorted_ts, target_ms)
                 if idx >= len(sorted_ts) or sorted_ts[idx] - target_ms > tolerance_ms:
+                    if now_ms - target_ms <= fresh_ms:
+                        fresh_misses += 1
                     continue  # no 1m close near enough the target — leave pending
                 target_price = price_history[sorted_ts[idx]]
                 # Raw forward return — direction-agnostic, measured from the
@@ -96,9 +120,11 @@ class CandidateLogger:
                 c.outcome_measured_at[window_name] = now.isoformat()
                 target_dt = datetime.fromtimestamp(target_ms / 1000, tz=timezone.utc)
                 c.outcome_target_time[window_name] = target_dt.isoformat()
+                filled.append({"state_ts": c.timestamp, "window": window_name, "return": round(ret, 6)})
                 changed = True
         if changed:
             self._save()
+        return {"filled": filled, "fresh_misses": fresh_misses}
 
     def recent(self, limit: int = 50) -> list[dict]:
         return [c.to_dict() for c in self.candidates[-limit:]]
@@ -136,8 +162,11 @@ class CandidateLogger:
 
     def _save(self):
         os.makedirs(config.DATA_DIR, exist_ok=True)
+        # self.candidates is already capped at MAX_CANDIDATES by add() — persist
+        # all of it, not some smaller slice (that used to silently drop
+        # anything older than 2000 candidates from disk, ~83 days in).
         data = {
-            "candidates": [c.to_dict() for c in self.candidates[-2000:]],
+            "candidates": [c.to_dict() for c in self.candidates],
             "saved_at": datetime.now(timezone.utc).isoformat(),
         }
         tmp = config.CANDIDATES_FILE + ".tmp"
