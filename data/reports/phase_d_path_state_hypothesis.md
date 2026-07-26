@@ -545,3 +545,57 @@ not `duration_in_state_3` and not a permanent `recovered` flag.
 
 No code for any of steps 1-6 exists yet. This section is the hypothesis
 freeze that must precede it.
+
+## 19. Result — does re-entry itself carry information?
+
+Per the user's plan, before freezing `w` or re-entry handling (§18's open
+items 2-3): `phase_d_episode_reentry_v1.py` checked, purely descriptively,
+whether episode count / re-entry carries information beyond first-episode
+recovery status. Answer: **yes, substantially.**
+
+**Section A — P(winner) by total distinct deep-episode count (whole 4h
+hold):**
+
+| Episodes | n | P(winner) |
+|---|---|---|
+| 0 | 402 | 81.6% |
+| 1 | 131 | 50.4% |
+| 2 | 85 | 36.5% |
+| 3 | 91 | 31.9% |
+| 4+ | 355 | 26.2% |
+
+Clean, monotone decay. Also notable: 355 of the 662 ever-deep trades
+(53.6%) have 4 or more distinct episodes — oscillating back and forth
+across the deep threshold is the *common* case, not an edge case, once a
+trade goes deep at all.
+
+**Section B — among the 615 trades that recovered from episode 1,
+split by whether a later episode ever happens:**
+
+| Group | n | P(winner) |
+|---|---|---|
+| no re-entry (exactly 1 episode) | 84 | 78.6% |
+| re-entry (2+ episodes) | 531 | 28.8% |
+
+This directly answers the user's question: re-entry is not neutral —
+"a new independent negative path begins" understates it. A trade that
+re-enters the deep state after recovering is, on average, in a
+substantially worse position than one that stays clear, even though both
+are labeled "recovered" by the first-episode definition alone.
+
+**Important caveat — this is not yet a live signal.** Both tables count
+episodes over the *entire* 4h hold, which is only fully known at the
+close (the same hindsight problem §16 fixed for "never recovered by
+close"). Reformulating this as a live-observable feature — e.g. "number
+of deep episodes observed so far, as of time t" — would need the same
+landmark treatment §16 applied to recovery, and has not been done here.
+Section A/B establish that episode count/re-entry matters descriptively;
+they do not yet show it is usable live at a specific point in a trade.
+
+**Implication for §18's open items:** re-entry handling should not
+default to "each episode independently, no memory of prior episodes" (the
+user's initial structural preference) without qualification — §19 shows
+prior-episode history clearly carries information. The open question is
+now sharper: not *whether* re-entry matters (it does), but how to build a
+live-observable version of "how many deep episodes has this trade already
+had by time t" into whatever Action Class is eventually chosen.
