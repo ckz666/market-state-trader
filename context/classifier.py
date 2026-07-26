@@ -86,7 +86,7 @@ def classify(state: MarketState) -> MarketContext:
         return MarketContext(
             name="compressed", direction_bias="neutral",
             confidence=0.6,
-            rationale=f"Low volatility (atr={atr:.4f}), squeeze={'active' if squeeze_active else 'not fired'} → wait for breakout",
+            rationale=f"Low volatility (atr={atr:.4f}) → wait for breakout",
             suggested_action="wait",
         )
 
