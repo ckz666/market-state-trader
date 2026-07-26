@@ -279,3 +279,118 @@ Two remaining steps before any real position-management mechanism exists:
    needs its own explicit, frozen hypothesis (same discipline as §2-§8
    above, not decided here) before any code touches real position
    management, and before 2026 is looked at again.
+
+Both steps are now done. `phase_d_recovery_state_v1.py` confirmed the
+definition on the real trade set (§11's numbers). `phase_d_execution_
+consequences_v1.py` then showed State 3 is not static: P(winner|S3)
+24.4% @1h -> 13.1% @2h -> 4.6% @3h, and the recovery-transition rate out
+of S3 decays the same way (§C of that report). This directly motivates
+§13 below.
+
+## 13. Execution-mechanic hypothesis (Time-Conditioned Recovery Management), frozen 2026-07-26
+
+> When a trade enters recovery-state 3, position management should not
+> condition on S3 alone, but on how long the trade has continuously
+> remained in S3 (`time_in_state_3`) — which is not the same variable as
+> time-since-entry. A trade can enter S3 late and recover quickly, or
+> enter S3 early and stay impaired for the rest of the hold; these are
+> different situations that time-since-entry alone cannot distinguish.
+
+Formally: replace `P(winner | S3)` with `P(winner | S3, duration_in_S3)`.
+
+This is a hypothesis about *which variable matters*, not yet an action.
+No specific action ("hold through duration X, then do Y") is chosen here —
+doing so now would reintroduce untested parameters under a new name, the
+same risk already flagged in §8.
+
+### Candidate action classes (not chosen — scoping only)
+
+To avoid colliding with the *state*-mechanism-class labels in §9 (Class
+A-D there), these are labeled separately as **Action Classes I-IV** —
+they describe what a management action could look like once
+`duration_in_state_3` exists as a variable, not which one is chosen:
+
+- **Action Class I — delayed binary exit.** Hold through S3 for a
+  "recovery window"; exit only if no recovery happens by its end.
+- **Action Class II — graduated reduction.** Reduce position size in
+  stages as `duration_in_state_3` grows.
+- **Action Class III — state-dependent sizing.** Not applicable to an
+  already-open position; would only matter for entry sizing — out of
+  scope for a position-*management* hypothesis about open trades.
+- **Action Class IV — dynamic remaining-risk band.** Position stays open,
+  but the tolerated further loss shrinks as `duration_in_state_3` grows.
+
+## 14. Next step
+
+Before choosing among Action Classes I-IV: one more purely descriptive
+step. Measure `duration_in_state_3` directly from the 1-minute price path
+(finer-grained than the 15m/30m/1h/2h/3h/4h checkpoints used so far), for
+every trade that ever enters S3 within its 4h hold:
+
+- `time_to_recovery` = minutes from the first crossing below the deep
+  threshold to the first subsequent crossing back above it (Def 1), if
+  that happens before the 4h close.
+- Trades that never recover within the 4h window form a separate,
+  **censored** group — not folded into the same duration buckets, since
+  "never recovered by close" is qualitatively different from "recovered
+  slowly."
+- Then: `P(winner | duration_in_state_3 bucket)`, again looking for a
+  stable degrading structure across bucket boundaries rather than one
+  optimal cutoff — same discipline as §11's threshold-band freeze.
+
+Only after that structure is confirmed (or not) does an Action Class get
+chosen, on the same "structural grounds, not backtested-performance
+grounds" basis as §10.
+
+## 15. Result — §14's descriptive step, and a partial revision
+
+`phase_d_time_in_state3_v1.py` measured `duration_in_state_3` on the
+1-minute path for all 662 Discovery trades that ever reach the deep
+threshold within their 4h hold. The result does **not** confirm the clean
+monotone gradient the hypothesis in §13 anticipated:
+
+| Duration bucket (recovered trades only) | n | P(winner) |
+|---|---|---|
+| <15m | 515 | 34.8% |
+| 15-30m | 36 | 33.3% |
+| 30-60m | 32 | 56.2% |
+| 60-120m | 21 | 38.1% |
+| 120-240m | 11 | too few |
+| **never recovered by close** | 47 | **0.0%** |
+
+Among trades that *do* recover, `duration_in_state_3` shows no reliable
+gradient — 30-60m (56.2%) is actually higher than the two buckets before
+it, almost certainly noise from small, overlapping-CI samples (n=32-36),
+not a real reversal. **The variable that actually separates outcomes
+cleanly is binary — recovered vs. never-recovered-by-close (34-56% vs.
+0%) — not how long recovery took once it happened.**
+
+A second cut, splitting by *when* the deep episode first starts
+(`t_enter_min`, i.e. how early vs. late in the 4h hold the trade first
+goes deep), shows the clean monotone structure instead:
+
+| Deep episode starts at | n | Never recovers by close | P(winner) |
+|---|---|---|---|
+| 0-1h | 421 | 5% | 38.2% |
+| 1-2h | 123 | 7% | 30.9% |
+| 2-3h | 69 | 10% | 21.7% |
+| 3-4h | 48 | 19% | 10.4% |
+
+This lines up with the earlier checkpoint-based finding (§ discovery in
+`phase_c_trade_path_analysis_v4.py`/`phase_d_execution_consequences_v1.py`)
+but reframes it: it is not really "how long has the trade been impaired"
+that degrades outcomes. It is closer to "how much runway is left before
+the 4h close when the deep episode starts" — a trade going deep at 3h
+mechanically has little time left to either recover or produce a large
+favorable move, regardless of how quickly it would otherwise recover.
+
+**Revision to §13's hypothesis:** `duration_in_state_3` is not supported
+as the operative variable by this data. What is supported: (a) a sharp
+binary split between ever-recovering and never-recovering by close, and
+(b) a monotone decay in outcome by how early vs. late the deep episode
+starts (i.e. remaining runway, closer to `time_since_entry` after all,
+but conditioned specifically on the *moment the deep episode begins*
+rather than on elapsed time in general). Any Action Class chosen next
+should condition on runway-at-deep-episode-start and the eventual
+recovered/not-recovered split, not on a continuous recovery-duration
+gradient.
