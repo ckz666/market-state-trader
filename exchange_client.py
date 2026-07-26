@@ -63,13 +63,23 @@ class FuturesClient:
     HISTORY_ENDPOINT_MAX_LIMIT = 200
 
     async def fetch_ohlcv_range(self, symbol: str, timeframe: str, since_ms: int, until_ms: int,
-                                 limit: int = HISTORY_ENDPOINT_MAX_LIMIT, progress_cb=None) -> list:
+                                 limit: int = HISTORY_ENDPOINT_MAX_LIMIT, progress_cb=None,
+                                 checkpoint_cb=None, checkpoint_every: int = 100) -> list:
         """Fetch ALL candles in [since_ms, until_ms) via forward since-pagination
         against Bitget's historical-candles endpoint. Unlike fetch_ohlcv() (which
         walks backward from "now" for the last N candles — what the live loop
         uses), this walks forward from an explicit historical start, for
         backfilling an arbitrary past range. Additive: does not change
-        fetch_ohlcv()'s behavior."""
+        fetch_ohlcv()'s behavior.
+
+        checkpoint_cb: optional async callback invoked every `checkpoint_every`
+        batches (and once more at the end) with a *copy* of the candles fetched
+        so far, so a long-running caller can persist progress incrementally —
+        this can run for a long time (thousands of 200-candle calls for a
+        multi-year 1m backfill) and everything fetched so far would otherwise
+        only ever exist in this in-memory list, lost entirely if the process
+        is interrupted before the final return.
+        """
         sym = to_futures_symbol(symbol)
         tf_ms = _tf_ms(timeframe)
         limit = min(limit, self.HISTORY_ENDPOINT_MAX_LIMIT)
@@ -86,6 +96,8 @@ class FuturesClient:
             batches += 1
             if progress_cb:
                 progress_cb(batches, all_candles[-1][0])
+            if checkpoint_cb and batches % checkpoint_every == 0:
+                await checkpoint_cb(list(all_candles))
             last_ts = batch[-1][0]
             if last_ts < cursor:
                 break  # safety: exchange returned non-advancing data
@@ -94,6 +106,8 @@ class FuturesClient:
             # legitimately return < limit candles mid-range (e.g. near "now",
             # where it hands off to the recent-candles endpoint) without that
             # meaning history has actually run out; only an empty batch does.
+        if checkpoint_cb:
+            await checkpoint_cb(list(all_candles))
         return [c for c in all_candles if since_ms <= c[0] < until_ms]
 
     async def fetch_order_book(self, symbol: str, limit: int = 20) -> dict:
@@ -203,8 +217,10 @@ class ExchangeClient:
         await self._client.__aexit__(*args)
     async def fetch_ohlcv(self, symbol, timeframe, limit=300):
         return await self._client.fetch_ohlcv(symbol, timeframe, limit)
-    async def fetch_ohlcv_range(self, symbol, timeframe, since_ms, until_ms, limit=1000, progress_cb=None):
-        return await self._client.fetch_ohlcv_range(symbol, timeframe, since_ms, until_ms, limit, progress_cb)
+    async def fetch_ohlcv_range(self, symbol, timeframe, since_ms, until_ms, limit=1000, progress_cb=None,
+                                 checkpoint_cb=None, checkpoint_every=100):
+        return await self._client.fetch_ohlcv_range(symbol, timeframe, since_ms, until_ms, limit, progress_cb,
+                                                      checkpoint_cb, checkpoint_every)
     async def fetch_ticker(self, symbol):
         return await self._client.fetch_ticker(symbol)
     async def fetch_funding_rate(self, symbol):

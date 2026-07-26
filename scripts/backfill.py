@@ -61,9 +61,21 @@ def _cache_path(cache_dir: str, symbol: str, tf: str) -> str:
     return os.path.join(cache_dir, f"{tag}_{tf}.csv")
 
 
+def _write_cache_csv(path: str, rows: list):
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
+    df = df.drop_duplicates(subset="timestamp").sort_values("timestamp")
+    tmp = path + ".tmp"
+    df.to_csv(tmp, index=False)
+    os.replace(tmp, path)  # atomic — a crash mid-write can't corrupt the cache
+
+
 async def fetch_with_cache(client: ExchangeClient, symbol: str, tf: str,
                             since_ms: int, until_ms: int, cache_dir: str, use_cache: bool) -> list:
     path = _cache_path(cache_dir, symbol, tf)
+    existing_rows: list = []
+    resume_since = since_ms
+
     if use_cache and os.path.exists(path):
         cached = pd.read_csv(path)
         if not cached.empty:
@@ -72,10 +84,18 @@ async def fetch_with_cache(client: ExchangeClient, symbol: str, tf: str,
                 rows = cached[(cached["timestamp"] >= since_ms) & (cached["timestamp"] < until_ms)]
                 print(f"  {tf}: {len(rows)} candles from cache ({path})")
                 return rows.values.tolist()
+            if cmin <= since_ms:
+                # Partial cache from an earlier/interrupted run that starts
+                # early enough — resume fetching from where it left off
+                # instead of re-fetching the whole range from scratch.
+                existing_rows = cached[cached["timestamp"] < until_ms].values.tolist()
+                resume_since = cmax + TF_MS[tf]
+                print(f"  {tf}: resuming from cached checkpoint ({len(existing_rows)} candles "
+                      f"already cached up to {datetime.fromtimestamp(cmax/1000, tz=timezone.utc)})")
 
-    start_dt = datetime.fromtimestamp(since_ms / 1000, tz=timezone.utc)
+    start_dt = datetime.fromtimestamp(resume_since / 1000, tz=timezone.utc)
     end_dt = datetime.fromtimestamp(until_ms / 1000, tz=timezone.utc)
-    expected = max(1, (until_ms - since_ms) // TF_MS[tf])
+    expected = max(1, (until_ms - resume_since) // TF_MS[tf])
     print(f"  {tf}: fetching from exchange, {start_dt} -> {end_dt} (~{expected:,} candles)...")
     t0 = time.monotonic()
     last_print = [0.0]
@@ -85,7 +105,7 @@ async def fetch_with_cache(client: ExchangeClient, symbol: str, tf: str,
         if now - last_print[0] >= 5:
             # Time-based, not batch-count-based — batch size varies (Bitget's
             # historical endpoint caps at 200/call, not the requested limit).
-            pct = min(100, (last_ts - since_ms) / max(1, until_ms - since_ms) * 100)
+            pct = min(100, (last_ts - resume_since) / max(1, until_ms - resume_since) * 100)
             when = datetime.fromtimestamp(last_ts / 1000, tz=timezone.utc)
             elapsed = now - t0
             eta_s = elapsed / max(pct, 0.01) * (100 - pct)
@@ -93,13 +113,19 @@ async def fetch_with_cache(client: ExchangeClient, symbol: str, tf: str,
                   f"ETA ~{eta_s/60:.0f}min)")
             last_print[0] = now
 
-    data = await client.fetch_ohlcv_range(symbol, tf, since_ms, until_ms, progress_cb=progress)
-    print(f"  {tf}: got {len(data)} candles in {time.monotonic()-t0:.1f}s")
+    async def checkpoint(fetched_so_far: list):
+        # Runs every ~100 batches (~1min at Bitget's observed pace) and once
+        # more at the end — persists progress incrementally instead of only
+        # ever holding it in this process's memory for the whole run.
+        _write_cache_csv(path, existing_rows + fetched_so_far)
 
-    os.makedirs(cache_dir, exist_ok=True)
-    df = pd.DataFrame(data, columns=["timestamp", "open", "high", "low", "close", "volume"])
-    df.to_csv(path, index=False)
-    return data
+    data = await client.fetch_ohlcv_range(symbol, tf, resume_since, until_ms,
+                                           progress_cb=progress, checkpoint_cb=checkpoint)
+    print(f"  {tf}: got {len(data)} new candles in {time.monotonic()-t0:.1f}s")
+
+    combined = existing_rows + data
+    _write_cache_csv(path, combined)
+    return [r for r in combined if since_ms <= r[0] < until_ms]
 
 
 def to_df(data: list) -> pd.DataFrame:
