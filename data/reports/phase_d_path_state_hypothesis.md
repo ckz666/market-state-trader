@@ -763,3 +763,57 @@ binary immediate-exit rule is the one result established here — it is
 not evidence against position management in general, only against this
 first, simplest version of it. This is the natural next discussion,
 not decided in this document.
+
+## 23. Action Class II — Recovery-Timeout, tested at two pre-specified w values
+
+Per the user's diagnosis of §22 (`P(win) falling` does not imply
+`E[return | HOLD] falling`, because rare-but-large recoveries can
+outweigh frequent small losses), Action Class II gives each deep episode
+(including re-entries, each independently) up to `w` minutes to recover
+on its own before acting, instead of exiting the instant a trade is
+detected in an episode. Only `w=60m` and `w=120m` were tested — both
+pre-specified from §16's finding (effect present by 60m, clear by
+90-120m), not a sweep with the best kept.
+
+| | Win rate | Mean | Median | P05 | Profit factor | Final equity | Max DD |
+|---|---|---|---|---|---|---|---|
+| Baseline (hold-to-4h) | 51.4% | -0.1306% | +0.0473% | -4.19% | 0.853 | 0.1731 | -82.94% |
+| Action Class II, w=60m | 49.9% | -0.1337% | -0.0085% | -3.37% | 0.846 | 0.1807 | -81.65% |
+| Action Class II, w=120m | 51.2% | -0.1061% | **+0.0369%** | -3.86% | **0.876** | **0.2368** | **-76.66%** |
+
+**w=60m** is close to neutral — median dips slightly negative, but final
+equity and max drawdown both improve modestly.
+
+**w=120m is a clearer result, and a meaningfully different picture from
+§22's Action Class I:** win rate and median are essentially unchanged
+from baseline (51.2% vs. 51.4%; +0.0369% vs. +0.0473%), while mean,
+profit factor, final equity (+37%), and max drawdown (-76.66% vs.
+-82.94%) all improve. Unlike §22, the by-episode breakdown now shows the
+timeout-exit subgroups roughly matching or beating their would-have-held
+baseline (e.g. `timeout_exit_episode_1`: -3.4802%/-2.4811% intervention
+vs. -3.5687%/-2.4977% baseline) rather than being worse, as Action Class
+I's instant version was. Giving the episode a bounded chance to resolve
+itself before acting appears to filter out exactly the trades that would
+have recovered anyway, leaving a genuinely worse-off subset for the
+timeout to act on.
+
+**Caveats, stated plainly, not smoothed over:**
+- Still Discovery-only (2020-2025). **Not OOS-validated.** Nothing here
+  should be treated as frozen or ready to trade.
+- `timeout_exit_episode_2` at w=120m has only n=16 — informative as a
+  direction, not as a precise estimate.
+- Two w values is not an exhaustive test; it is a deliberately small,
+  pre-justified set, consistent with the project's anti-overfitting
+  discipline (§8) — not a claim that 120m is *the* optimal window.
+- Compounding/final-equity improvements are partly a variance-reduction
+  effect (smaller realized drawdowns compound better), not purely an
+  improvement in the arithmetic edge — worth keeping the metrics
+  separate rather than reading "final equity up 37%" as "37% more
+  profitable" in isolation.
+
+**Where this leaves Phase D:** w=120m Recovery-Timeout is the first
+Action Class tested that does not clearly hurt the baseline and improves
+several risk metrics. It is a candidate for the next roadmap step (§18:
+OOS validation on 2026) if the user wants to proceed — but that decision,
+and any final freeze of the exact mechanic, is deliberately left open
+here, not made in this document.
