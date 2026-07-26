@@ -817,3 +817,56 @@ several risk metrics. It is a candidate for the next roadmap step (§18:
 OOS validation on 2026) if the user wants to proceed — but that decision,
 and any final freeze of the exact mechanic, is deliberately left open
 here, not made in this document.
+
+## 24. Pre-registration for OOS validation, frozen 2026-07-26 — written BEFORE the OOS run
+
+Per the user's decision: no further Discovery on the Action Class itself.
+`w=120m` is frozen and carried into a single OOS run on 2026, per §7/§18's
+original discipline (fit/decide on Discovery only, freeze, then one
+unmodified validation run — no iteration against 2026 results). This
+section is written and committed *before* that run's output exists, so
+the criteria cannot be adjusted after seeing the result.
+
+**Frozen, not re-decided:**
+- Action Class II, Recovery-Timeout, exactly as coded in
+  `phase_d_action_class_ii_v1.py`.
+- `w = 120 minutes`. Not re-optimized, not re-swept — `w=60m` was also
+  tested on Discovery (§23) but is not carried forward.
+- Baseline = `decision_rule_v1`'s existing hold-to-4h behavior (identical
+  fee/slippage assumptions on both sides).
+- Population = the actual 2026 `decision_rule_v1` trades (LPL/volatility
+  quintile edges frozen on 2020-2025, applied unchanged — same discipline
+  as `hypothesis_validation.py`/`decision_rule_v1.py` throughout this
+  project).
+
+**Primary metrics** (the ones that decide the outcome):
+- Paired `ΔReturn = return(Action II) - return(Baseline)` per trade —
+  its distribution (mean, median, % of trades with `ΔReturn > 0`), not
+  just aggregate PnL, specifically to check whether any edge is broad or
+  driven by a few outliers.
+- Profit factor.
+- Max drawdown.
+
+**Secondary metrics** (reported, not decisive alone):
+- Median return, win rate, final compounded equity.
+
+**No tuning permitted in this run:** no new `w`, no new states, no new
+filters, no re-fitting of the deep threshold or recovery definition. The
+by-triggering-episode breakdown (episode 1/2/3+) is reported for
+transparency, matching Discovery's own breakdown — but per the user's
+explicit caution, any single-digit-to-teens `n` cell (as `episode_2` was
+at n=16 in Discovery) is read as a directional note only, never as a
+validated effect, especially given 2026's much smaller trade count than
+Discovery's.
+
+**Outcome classification, fixed in advance:**
+- **A — OOS confirmed:** paired performance improves (primary metrics
+  point the same direction as Discovery) without materially worsening
+  robustness metrics.
+- **B — OOS neutral:** no clear advantage, but no clear harm either.
+  Hold-to-4h remains the default in this case.
+- **C — OOS refuted:** the Discovery-observed edge disappears or reverses
+  materially. The hypothesis is dropped, not re-tuned.
+
+The next commit after this one is the OOS run itself, using this section
+as the fixed yardstick.
