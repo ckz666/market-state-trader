@@ -86,7 +86,7 @@ class MarketStateTrader:
                 self._log("TRADE", f"{trigger.upper()} @ ${self.live_price:,.2f} | PnL: ${record['pnl']:+.2f}")
 
             # Compile state
-            state = compile_state(df_1h, df_4h=df_4h, df_1d=df_1h)
+            state = compile_state(df_1h, df_4h, df_15m=df_15m, df_1m=df_1m)
             self.last_state = state
 
             # Context
@@ -94,7 +94,7 @@ class MarketStateTrader:
             self.last_context = context
 
             # Decision
-            atr_pct = state.volatility.atr_norm
+            atr_pct = state.state_1h.volatility.atr_norm
             has_pos = self.paper.has_position
             pos_side = self.paper.position.side if self.paper.position else None
             decision = decide(context, atr_pct, has_open_position=has_pos, position_side=pos_side)

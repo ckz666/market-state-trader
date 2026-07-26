@@ -39,14 +39,19 @@ def classify(state: MarketState) -> MarketContext:
     4. CONTINUATION: trend + momentum aligned, not extended, ADX trending
     5. TRANSITION:   everything else → no clear edge
     """
-    bb = state.price_location.bb_position
-    adx = state.trend.adx
-    divergence = state.exhaustion.trend_momentum_divergence
-    mom_dir = state.momentum.direction
-    trend_dir = state.trend.direction
-    mom_str = state.momentum.strength
-    atr = state.volatility.atr_norm
-    squeeze_active = state.momentum.squeeze_fired
+    bb = state.state_1h.price_location.bb_position
+    adx = state.state_1h.trend.adx
+    divergence = state.state_1h.exhaustion.trend_momentum_divergence
+    mom_dir = state.state_1h.momentum.direction
+    trend_dir = state.state_1h.trend.direction
+    mom_str = state.state_1h.momentum.strength
+    atr = state.state_1h.volatility.atr_norm
+    squeeze_active = state.state_1h.momentum.squeeze_fired
+
+    # Multi-TF enrichments
+    st_15m_rejection = state.short_term_15m.upper_rejection > 0.3 or state.short_term_15m.lower_rejection > 0.3
+    st_15m_aligned = state.short_term_15m.momentum_aligned
+    micro_reversal = state.micro_1m.immediate_reversal
 
     # 1. EXTENDED
     if bb > config.BB_EXTENDED:
