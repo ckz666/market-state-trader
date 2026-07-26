@@ -1,0 +1,166 @@
+"""
+Paper Trading Engine — simulates positions, PnL, and risk management.
+No real orders — pure simulation with fee deduction.
+"""
+import json
+import os
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Optional
+
+import mst_config as config
+
+
+@dataclass
+class Position:
+    symbol: str
+    side: str           # "long" | "short"
+    amount: float
+    entry_price: float
+    leverage: int
+    stop_loss: float
+    take_profit: float
+    opened_at: str
+    margin: float = 0.0
+    funding_paid: float = 0.0
+
+    def unrealized_pnl(self, current_price: float) -> float:
+        if self.side == "long":
+            return (current_price - self.entry_price) * self.amount
+        else:
+            return (self.entry_price - current_price) * self.amount
+
+    def roe_pct(self, current_price: float) -> float:
+        if self.margin <= 0: return 0.0
+        return self.unrealized_pnl(current_price) / self.margin * 100
+
+    def to_dict(self, current_price: float = 0) -> dict:
+        return {
+            "symbol": self.symbol, "side": self.side,
+            "amount": self.amount, "entry_price": self.entry_price,
+            "leverage": self.leverage, "stop_loss": self.stop_loss,
+            "take_profit": self.take_profit, "opened_at": self.opened_at,
+            "margin": self.margin, "unrealized_pnl": round(self.unrealized_pnl(current_price), 4),
+            "roe_pct": round(self.roe_pct(current_price), 2),
+        }
+
+
+class PaperTrader:
+    """Simulated futures trading with position tracking."""
+
+    def __init__(self):
+        self.balance = config.INITIAL_BALANCE
+        self.peak_balance = self.balance
+        self.position: Optional[Position] = None
+        self.trade_history: list[dict] = []
+        self.equity_history: list[dict] = []
+        self._load()
+
+    @property
+    def has_position(self) -> bool:
+        return self.position is not None
+
+    @property
+    def equity(self) -> float:
+        return self.balance
+
+    def open(self, side: str, amount: float, price: float, leverage: int,
+             sl: float, tp: float):
+        """Open a new position."""
+        margin = (amount * price) / leverage
+        fee = amount * price * config.TAKER_FEE
+        self.balance -= fee
+        self.position = Position(
+            symbol=config.SYMBOL, side=side, amount=amount,
+            entry_price=price, leverage=leverage,
+            stop_loss=sl, take_profit=tp,
+            opened_at=datetime.now().isoformat(),
+            margin=margin,
+        )
+        self._save()
+
+    def close(self, price: float, reason: str = "manual") -> dict:
+        """Close the current position."""
+        if not self.position:
+            return {"error": "No position"}
+        pnl = self.position.unrealized_pnl(price)
+        fee = self.position.amount * price * config.TAKER_FEE
+        pnl -= fee + self.position.funding_paid
+        self.balance += pnl + self.position.margin
+        if self.balance > self.peak_balance:
+            self.peak_balance = self.balance
+
+        record = {
+            "ts": datetime.now().isoformat(),
+            "side": self.position.side,
+            "entry_price": self.position.entry_price,
+            "exit_price": price,
+            "amount": self.position.amount,
+            "pnl": round(pnl, 4),
+            "reason": reason,
+            "opened_at": self.position.opened_at,
+        }
+        self.trade_history.append(record)
+        self.position = None
+        self._save()
+        return record
+
+    def check_sl_tp(self, price: float) -> Optional[str]:
+        """Check if SL or TP is hit. Returns 'sl', 'tp', or None."""
+        if not self.position:
+            return None
+        if self.position.side == "long":
+            if price <= self.position.stop_loss: return "sl"
+            if price >= self.position.take_profit: return "tp"
+        else:
+            if price >= self.position.stop_loss: return "sl"
+            if price <= self.position.take_profit: return "tp"
+        return None
+
+    def record_equity(self, price: float):
+        """Record equity point for charting."""
+        eq = self.equity
+        if self.position:
+            eq += self.position.unrealized_pnl(price)
+        self.equity_history.append({
+            "ts": datetime.now().isoformat(),
+            "equity": round(eq, 2),
+        })
+        self.equity_history = self.equity_history[-500:]
+
+    def status(self, price: float = 0) -> dict:
+        upnl = self.position.unrealized_pnl(price) if self.position else 0
+        return {
+            "balance": round(self.balance, 2),
+            "equity": round(self.balance + upnl, 2),
+            "peak_balance": round(self.peak_balance, 2),
+            "total_pnl": round(self.balance - config.INITIAL_BALANCE, 2),
+            "position": self.position.to_dict(price) if self.position else None,
+            "trade_count": len(self.trade_history),
+        }
+
+    def _save(self):
+        os.makedirs(config.DATA_DIR, exist_ok=True)
+        data = {
+            "balance": self.balance,
+            "peak_balance": self.peak_balance,
+            "position": self.position.to_dict() if self.position else None,
+            "trades": self.trade_history[-200:],
+        }
+        tmp = config.STATE_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, config.STATE_FILE)
+
+    def _load(self):
+        if not os.path.exists(config.STATE_FILE):
+            return
+        try:
+            with open(config.STATE_FILE) as f:
+                data = json.load(f)
+            self.balance = data.get("balance", config.INITIAL_BALANCE)
+            self.peak_balance = data.get("peak_balance", self.balance)
+            self.trade_history = data.get("trades", [])
+            # Position can't be reconstructed perfectly — start fresh
+        except Exception:
+            pass
