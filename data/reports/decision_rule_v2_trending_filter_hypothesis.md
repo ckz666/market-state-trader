@@ -80,3 +80,45 @@ result, not as a high-powered test.
   entry-selection question, independent of what happens after entry.
 - No re-tuning of the filter based on the OOS result, per the same rule
   as every other OOS step in this project.
+
+## 6. OOS result and classification (2026-07-26)
+
+`decision_rule_v2_trending_filter_oos_v1.py` ran the exact frozen filter
+on 2026. Result:
+
+| Population | n | Win rate | Median | Mean | Profit factor |
+|---|---|---|---|---|---|
+| Baseline (unfiltered) | 39 | 51.3% | +0.1787% | -0.0893% | 0.868 |
+| Restricted to `trending` | 34 | 50.0% | +0.0776% | -0.1876% | 0.742 |
+| Restricted to non-`trending` | 5 | 60.0% | +0.4969% | +0.5788% | 2.781 |
+
+**All three pre-registered primary metrics (win rate, median, profit
+factor) move in the WRONG direction** for the trending-restricted subset
+— worse than the unfiltered baseline, not better. The non-trending
+subset looks much stronger, but n=5 is far too small to read (the
+opposite of what Discovery would have predicted, if it were reliable at
+this n).
+
+**Classification, applying §4's criteria as written: C — OOS refuted.**
+Not a marginal miss — every primary metric moved against the hypothesis,
+not just "failed to improve." This is a real result, not overridden by
+appeals to small n: n=34 for the trending subset is not tiny (larger
+than most of Phase D's OOS subsets), and the direction is consistently
+wrong across win rate, median, and profit factor simultaneously, which
+is harder to write off as pure noise than a single metric moving.
+
+**Decision: do not adopt the trending filter.** `decision_rule_v1`
+remains unchanged, exactly as before this investigation. No re-tuning,
+no searching for a different regime cut, no second OOS attempt on this
+same hypothesis — per §5, the rule from the start was one frozen filter,
+one OOS run, honest result.
+
+**What this does and doesn't mean:** it does not retroactively invalidate
+discovery_v6-v9's Discovery-period findings — the regime-conditioning
+effect was real and reasonably well-evidenced *in that period*. It does
+mean that effect did not carry forward into 2026 in a way that survives
+a real OOS test, at least not yet, at this sample size. This is exactly
+the kind of result the Discovery→freeze→OOS discipline exists to catch:
+a plausible, well-evidenced-in-sample pattern that still doesn't survive
+contact with new data. Filed as a completed, negative research result,
+not left open for further tinkering.
