@@ -35,7 +35,7 @@ class MarketStateTrader:
         self.ohlcv_cache: dict = {"1m": [], "15m": [], "1h": [], "4h": []}
 
     def _log(self, level: str, msg: str):
-        entry = {"ts": datetime.now().isoformat(), "level": level, "msg": msg}
+        entry = {"ts": datetime.now(timezone.utc).isoformat(), "level": level, "msg": msg}
         self.log.append(entry)
         self.log = self.log[-200:]
         print(f"[{entry['ts'][11:19]}] [{level}] {msg}")
@@ -54,7 +54,7 @@ class MarketStateTrader:
 
             def to_df(data):
                 df = pd.DataFrame(data, columns=["timestamp","open","high","low","close","volume"])
-                df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+                df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
                 df.set_index("timestamp", inplace=True)
                 return df
 
@@ -89,7 +89,7 @@ class MarketStateTrader:
                 self._log("INFO", f"Cycle {self.cycle_count} | ${self.live_price:,.2f}{pos_info}")
 
             # Only evaluate MarketState on NEW completed 1h candle
-            now = pd.Timestamp.utcnow()
+            now = pd.Timestamp.now('UTC')
             closed_1h = df_1h[df_1h.index + pd.Timedelta(hours=1) <= now]
             if len(closed_1h) < 2:
                 return
@@ -133,13 +133,13 @@ class MarketStateTrader:
             if decision.action == "open_long" and not has_pos:
                 sl = self.live_price * (1 - decision.sl_pct)
                 tp = self.live_price * (1 + decision.tp_pct)
-                amount = (self.paper.equity * config.MAX_POSITION_PCT * decision.leverage) / self.live_price
+                amount = (self.paper.cash_balance * config.MAX_POSITION_PCT * decision.leverage) / self.live_price
                 self.paper.open("long", amount, self.live_price, decision.leverage, sl, tp)
                 self._log("TRADE", f"OPEN LONG {amount:.6f} @ ${self.live_price:,.2f}")
             elif decision.action == "open_short" and not has_pos:
                 sl = self.live_price * (1 + decision.sl_pct)
                 tp = self.live_price * (1 - decision.tp_pct)
-                amount = (self.paper.equity * config.MAX_POSITION_PCT * decision.leverage) / self.live_price
+                amount = (self.paper.cash_balance * config.MAX_POSITION_PCT * decision.leverage) / self.live_price
                 self.paper.open("short", amount, self.live_price, decision.leverage, sl, tp)
                 self._log("TRADE", f"OPEN SHORT {amount:.6f} @ ${self.live_price:,.2f}")
             elif decision.action.startswith("close_") and has_pos:
@@ -148,7 +148,7 @@ class MarketStateTrader:
 
             # Log
             self.logger.add(Candidate(
-                timestamp=datetime.now(timezone.utc).isoformat(),
+                timestamp=state.timestamp.isoformat(),
                 direction=direction, price=self.live_price,
                 context=context.name, context_confidence=context.confidence,
                 decision=decision.action, decision_reason=decision.reason,

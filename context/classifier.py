@@ -46,10 +46,14 @@ def classify(state: MarketState) -> MarketContext:
     trend_dir = state.state_1h.trend.direction
     mom_str = state.state_1h.momentum.strength
     atr = state.state_1h.volatility.atr_norm
-    # squeeze_fired = just exited compression (breakout signal, NOT compression)
-    # squeeze would be active if we had it in state — for now, only use ATR
+    # squeeze_active = currently IN compression (BB inside Keltner).
+    # squeeze_fired = just exited compression (potential breakout signal).
+    # Currently, COMPRESSED detection uses ATR only; squeeze data is collected
+    # in MarketState for empirical analysis before wiring it into decisions.
 
-    # Multi-TF enrichments
+    # Multi-TF enrichments — collected, stored in MarketState for analysis,
+    # but NOT yet used by the classifier (empirical validation pending):
+    #   st_15m_rejection / st_15m_aligned / micro_reversal
     st_15m_rejection = state.short_term_15m.upper_rejection > 0.3 or state.short_term_15m.lower_rejection > 0.3
     st_15m_aligned = state.short_term_15m.momentum_aligned
     micro_reversal = state.micro_1m.immediate_reversal

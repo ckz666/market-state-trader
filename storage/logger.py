@@ -12,19 +12,23 @@ import mst_config as config
 
 @dataclass
 class Candidate:
-    timestamp: str
-    direction: str
+    timestamp: str                         # candle close time (ISO 8601 UTC)
+    direction: str                         # "long" | "short" | "none"
     price: float
     context: str
     context_confidence: float
     decision: str
     decision_reason: str
     market_state: Optional[dict] = None
-    outcome_15m: Optional[float] = None
-    outcome_30m: Optional[float] = None
-    outcome_1h: Optional[float] = None
-    outcome_4h: Optional[float] = None
-    outcome_fill_times: dict = field(default_factory=dict)
+    # Raw forward returns (dir-agnostic — not adjusted for long/short)
+    forward_return_15m: Optional[float] = None
+    forward_return_30m: Optional[float] = None
+    forward_return_1h: Optional[float] = None
+    forward_return_4h: Optional[float] = None
+    # When the return was measured (actual wall-clock time)
+    outcome_measured_at: dict = field(default_factory=dict)
+    # Target measurement time (candle-close-aligned)
+    outcome_target_time: dict = field(default_factory=dict)
 
     def to_dict(self):
         d = asdict(self)
@@ -55,16 +59,20 @@ class CandidateLogger:
             except (ValueError, TypeError):
                 continue
             age = (now - cts).total_seconds()
-            if age < 0: continue
+            if age < 0:
+                continue
             for window_name, window_sec in self.OUTCOME_WINDOWS.items():
-                attr = f"outcome_{window_name}"
-                if getattr(c, attr) is not None: continue
-                if age < window_sec: continue
+                attr = f"forward_return_{window_name}"
+                if getattr(c, attr) is not None:
+                    continue
+                if age < window_sec:
+                    continue
+                # Raw forward return — direction-agnostic
                 ret = (current_price - c.price) / c.price
-                if c.direction == "short":
-                    ret = -ret
                 setattr(c, attr, round(ret, 6))
-                c.outcome_fill_times[window_name] = now.isoformat()
+                c.outcome_measured_at[window_name] = now.isoformat()
+                target = cts + __import__('datetime').timedelta(seconds=window_sec)
+                c.outcome_target_time[window_name] = target.isoformat()
                 changed = True
         if changed:
             self._save()
@@ -74,8 +82,8 @@ class CandidateLogger:
 
     def summary(self) -> dict:
         total = len(self.candidates)
-        with_4h = [c for c in self.candidates if c.outcome_4h is not None]
-        wins_4h = sum(1 for c in with_4h if c.outcome_4h > 0)
+        with_4h = [c for c in self.candidates if c.forward_return_4h is not None]
+        wins_4h = sum(1 for c in with_4h if c.forward_return_4h > 0)
         # Per-context breakdown
         ctx_stats = {}
         for c in self.candidates:
@@ -83,11 +91,11 @@ class CandidateLogger:
             if ctx not in ctx_stats:
                 ctx_stats[ctx] = {"total": 0, "with_4h": 0, "wins_4h": 0, "sum_4h": 0.0}
             ctx_stats[ctx]["total"] += 1
-            if c.outcome_4h is not None:
+            if c.forward_return_4h is not None:
                 ctx_stats[ctx]["with_4h"] += 1
-                if c.outcome_4h > 0:
+                if c.forward_return_4h > 0:
                     ctx_stats[ctx]["wins_4h"] += 1
-                ctx_stats[ctx]["sum_4h"] += c.outcome_4h
+                ctx_stats[ctx]["sum_4h"] += c.forward_return_4h
         contexts = {}
         for ctx, s in ctx_stats.items():
             contexts[ctx] = {
@@ -128,11 +136,13 @@ class CandidateLogger:
                     decision=d.get("decision", "hold"),
                     decision_reason=d.get("decision_reason", ""),
                     market_state=d.get("market_state"),
-                    outcome_15m=d.get("outcome_15m"),
-                    outcome_30m=d.get("outcome_30m"),
-                    outcome_1h=d.get("outcome_1h"),
-                    outcome_4h=d.get("outcome_4h"),
-                    outcome_fill_times=d.get("outcome_fill_times", {}),
+                    # new field names (post-2026-07-26)
+                    forward_return_15m=d.get("forward_return_15m", d.get("outcome_15m")),
+                    forward_return_30m=d.get("forward_return_30m", d.get("outcome_30m")),
+                    forward_return_1h=d.get("forward_return_1h", d.get("outcome_1h")),
+                    forward_return_4h=d.get("forward_return_4h", d.get("outcome_4h")),
+                    outcome_measured_at=d.get("outcome_measured_at", d.get("outcome_fill_times", {})),
+                    outcome_target_time=d.get("outcome_target_time", {}),
                 ))
         except Exception:
             pass

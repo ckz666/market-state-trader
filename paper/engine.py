@@ -5,7 +5,7 @@ No real orders — pure simulation with fee deduction.
 import json
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import mst_config as config
@@ -50,7 +50,7 @@ class PaperTrader:
 
     def __init__(self):
         self.balance = config.INITIAL_BALANCE
-        self.peak_balance = self.balance
+        self.peak_equity = self.balance
         self.position: Optional[Position] = None
         self.trade_history: list[dict] = []
         self.equity_history: list[dict] = []
@@ -61,7 +61,14 @@ class PaperTrader:
         return self.position is not None
 
     @property
-    def equity(self) -> float:
+    def cash_balance(self) -> float:
+        """Available cash (balance), NOT including unrealized PnL."""
+        return self.balance
+
+    def equity(self, price: float) -> float:
+        """True equity = cash balance + unrealized PnL of open position."""
+        if self.position:
+            return self.balance + self.position.unrealized_pnl(price)
         return self.balance
 
     def open(self, side: str, amount: float, price: float, leverage: int,
@@ -69,12 +76,12 @@ class PaperTrader:
         """Open a new position."""
         margin = (amount * price) / leverage
         fee = amount * price * config.TAKER_FEE
-        self.balance -= fee  # only fee deducted; margin is tracked in position, not subtracted from balance
+        self.balance -= fee  # only fee deducted; margin tracked in position, not subtracted
         self.position = Position(
             symbol=config.SYMBOL, side=side, amount=amount,
             entry_price=price, leverage=leverage,
             stop_loss=sl, take_profit=tp,
-            opened_at=datetime.now().isoformat(),
+            opened_at=datetime.now(timezone.utc).isoformat(),
             margin=margin,
         )
         self._save()
@@ -87,21 +94,27 @@ class PaperTrader:
         fee = self.position.amount * price * config.TAKER_FEE
         pnl -= fee + self.position.funding_paid
         self.balance += pnl  # margin was never deducted, don't add it back
-        if self.balance > self.peak_balance:
-            self.peak_balance = self.balance
+        # Snapshot before closing for the trade record
+        pos_side = self.position.side
+        pos_entry = self.position.entry_price
+        pos_amount = self.position.amount
+        pos_opened = self.position.opened_at
+        self.position = None
+        eq = self.equity(price)
+        if eq > self.peak_equity:
+            self.peak_equity = eq
 
         record = {
-            "ts": datetime.now().isoformat(),
-            "side": self.position.side,
-            "entry_price": self.position.entry_price,
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "side": pos_side,
+            "entry_price": pos_entry,
             "exit_price": price,
-            "amount": self.position.amount,
+            "amount": pos_amount,
             "pnl": round(pnl, 4),
             "reason": reason,
-            "opened_at": self.position.opened_at,
+            "opened_at": pos_opened,
         }
         self.trade_history.append(record)
-        self.position = None
         self._save()
         return record
 
@@ -118,22 +131,22 @@ class PaperTrader:
         return None
 
     def record_equity(self, price: float):
-        """Record equity point for charting."""
-        eq = self.equity
-        if self.position:
-            eq += self.position.unrealized_pnl(price)
+        """Record equity point for charting and update peak."""
+        eq = self.equity(price)
         self.equity_history.append({
-            "ts": datetime.now().isoformat(),
+            "ts": datetime.now(timezone.utc).isoformat(),
             "equity": round(eq, 2),
         })
         self.equity_history = self.equity_history[-500:]
+        if eq > self.peak_equity:
+            self.peak_equity = eq
 
     def status(self, price: float = 0) -> dict:
-        upnl = self.position.unrealized_pnl(price) if self.position else 0
+        eq = self.equity(price)
         return {
             "balance": round(self.balance, 2),
-            "equity": round(self.balance + upnl, 2),
-            "peak_balance": round(self.peak_balance, 2),
+            "equity": round(eq, 2),
+            "peak_equity": round(self.peak_equity, 2),
             "total_pnl": round(self.balance - config.INITIAL_BALANCE, 2),
             "position": self.position.to_dict(price) if self.position else None,
             "trade_count": len(self.trade_history),
@@ -143,7 +156,7 @@ class PaperTrader:
         os.makedirs(config.DATA_DIR, exist_ok=True)
         data = {
             "balance": self.balance,
-            "peak_balance": self.peak_balance,
+            "peak_equity": self.peak_equity,
             "position": self.position.to_dict() if self.position else None,
             "trades": self.trade_history[-200:],
         }
@@ -159,7 +172,8 @@ class PaperTrader:
             with open(config.STATE_FILE) as f:
                 data = json.load(f)
             self.balance = data.get("balance", config.INITIAL_BALANCE)
-            self.peak_balance = data.get("peak_balance", self.balance)
+            # backward compat: old files used 'peak_balance'
+            self.peak_equity = data.get("peak_equity", data.get("peak_balance", self.balance))
             self.trade_history = data.get("trades", [])
             # Position persisted for restart safety
             pos_data = data.get("position")

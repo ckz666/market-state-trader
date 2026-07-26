@@ -10,7 +10,7 @@ Timeframe hierarchy (each with its specific role):
 No scores, no weights, no trading decisions.
 """
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 
@@ -134,7 +134,7 @@ class Context4h:
 @dataclass
 class MarketState:
     """Complete multi-timeframe market description."""
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Timeframe hierarchy
     context_4h: Context4h = field(default_factory=Context4h)       # regime
@@ -149,6 +149,7 @@ class MarketState:
         return {
             "timestamp": self.timestamp.isoformat(),
             "ohlcv": self.ohlcv,
+            "source_ts": self.source_ts,
             "context_4h": self.context_4h.to_dict(),
             "state_1h": self.state_1h.to_dict() if self.state_1h else {},
             "short_term_15m": self.short_term_15m.to_dict(),

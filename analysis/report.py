@@ -19,6 +19,14 @@ def load_candidates(path: str) -> list[dict]:
     return data.get("candidates", [])
 
 
+def _get_outcome(c, key, old_key):
+    """Return outcome value — new key first, fall back to old key for backward compat."""
+    val = c.get(key)
+    if val is not None:
+        return val
+    return c.get(old_key)
+
+
 def _extract_nested(d, *keys, default=None):
     for key in keys:
         if not isinstance(d, dict): return default
@@ -55,13 +63,15 @@ def full_report(json_path: str, outcome_horizon: str = "4h"):
         return
 
     # Filter to candidates with market_state and outcome
-    outcome_key = f"outcome_{outcome_horizon}"
-    ms_cands = [c for c in candidates if c.get("market_state") and c.get(outcome_key) is not None]
+    outcome_key = f"forward_return_{outcome_horizon}"
+    # Backward compat: also check old 'outcome_' prefix
+    old_outcome_key = f"outcome_{outcome_horizon}"
+    ms_cands = [c for c in candidates if c.get("market_state") and (c.get(outcome_key) is not None or c.get(old_outcome_key) is not None)]
 
     total = len(candidates)
     with_outcome = len(ms_cands)
-    winners = sum(1 for c in ms_cands if c[outcome_key] > 0)
-    losers = sum(1 for c in ms_cands if c[outcome_key] < 0)
+    winners = sum(1 for c in ms_cands if _get_outcome(c, outcome_key, old_outcome_key) > 0)
+    losers = sum(1 for c in ms_cands if _get_outcome(c, outcome_key, old_outcome_key) < 0)
 
     print("=" * 72)
     print("  MARKET STATE ANALYSIS REPORT")
@@ -73,7 +83,7 @@ def full_report(json_path: str, outcome_horizon: str = "4h"):
     print(f"  Winners:                    {winners:>6d}  ({winners/with_outcome*100:.1f}%)" if with_outcome else "")
     print(f"  Losers:                     {losers:>6d}  ({losers/with_outcome*100:.1f}%)" if with_outcome else "")
     if with_outcome:
-        mean = sum(c[outcome_key] for c in ms_cands) / with_outcome
+        mean = sum(_get_outcome(c, outcome_key, old_outcome_key) for c in ms_cands) / with_outcome
         print(f"  Overall expectancy:         {mean*100:>+.4f}%")
 
     # ── Context performance ──
@@ -82,7 +92,7 @@ def full_report(json_path: str, outcome_horizon: str = "4h"):
     ctx_groups = defaultdict(list)
     for c in ms_cands:
         ctx = c.get("context", "unknown")
-        ctx_groups[ctx].append(c[outcome_key])
+        ctx_groups[ctx].append(_get_outcome(c, outcome_key, old_outcome_key))
 
     for ctx in ["continuation", "mean_reversion", "extended", "compressed", "transition"]:
         vals = ctx_groups.get(ctx, [])
@@ -105,8 +115,8 @@ def full_report(json_path: str, outcome_horizon: str = "4h"):
             for c in ms_cands:
                 v = _extract_nested(c.get("market_state"), *keys)
                 if v is None: continue
-                if c[outcome_key] > 0: w_vals.append(v)
-                elif c[outcome_key] < 0: l_vals.append(v)
+                if _get_outcome(c, outcome_key, old_outcome_key) > 0: w_vals.append(v)
+                elif _get_outcome(c, outcome_key, old_outcome_key) < 0: l_vals.append(v)
             if len(w_vals) >= 5 and len(l_vals) >= 5:
                 wm = sum(w_vals) / len(w_vals)
                 lm = sum(l_vals) / len(l_vals)
@@ -123,8 +133,8 @@ def full_report(json_path: str, outcome_horizon: str = "4h"):
     for direction in ["long", "short"]:
         subset = [c for c in ms_cands if c.get("direction") == direction]
         if subset:
-            w = sum(1 for c in subset if c[outcome_key] > 0)
-            m = sum(c[outcome_key] for c in subset) / len(subset)
+            w = sum(1 for c in subset if _get_outcome(c, outcome_key, old_outcome_key) > 0)
+            m = sum(_get_outcome(c, outcome_key, old_outcome_key) for c in subset) / len(subset)
             print(f"  {direction:<10s}  n={len(subset):>4d}  WR={w/len(subset)*100:5.1f}%  E={m*100:+7.4f}%")
 
     # ── Context × Direction ──
@@ -134,8 +144,8 @@ def full_report(json_path: str, outcome_horizon: str = "4h"):
         for direction in ["long", "short"]:
             subset = [c for c in ms_cands if c.get("context") == ctx and c.get("direction") == direction]
             if len(subset) >= 3:
-                w = sum(1 for c in subset if c[outcome_key] > 0)
-                m = sum(c[outcome_key] for c in subset) / len(subset)
+                w = sum(1 for c in subset if _get_outcome(c, outcome_key, old_outcome_key) > 0)
+                m = sum(_get_outcome(c, outcome_key, old_outcome_key) for c in subset) / len(subset)
                 print(f"  {ctx:<20s} {direction:<6s}  n={len(subset):>4d}  WR={w/len(subset)*100:5.1f}%  E={m*100:+7.4f}%")
 
     print(f"\n{'=' * 72}")
@@ -148,14 +158,16 @@ def context_summary(json_path: str) -> dict:
     cands = load_candidates(json_path)
     result = {}
     for horizon in ["15m", "30m", "1h", "4h"]:
-        ok = f"outcome_{horizon}"
+        ok = f"forward_return_{horizon}"
+        old_ok = f"outcome_{horizon}"
         ctx_stats = defaultdict(lambda: {"total": 0, "wins": 0, "sum": 0.0})
         for c in cands:
-            if c.get("market_state") and c.get(ok) is not None:
+            val = _get_outcome(c, ok, old_ok)
+            if c.get("market_state") and val is not None:
                 ctx = c.get("context", "unknown")
                 ctx_stats[ctx]["total"] += 1
-                if c[ok] > 0: ctx_stats[ctx]["wins"] += 1
-                ctx_stats[ctx]["sum"] += c[ok]
+                if val > 0: ctx_stats[ctx]["wins"] += 1
+                ctx_stats[ctx]["sum"] += val
         result[horizon] = {}
         for ctx, s in ctx_stats.items():
             result[horizon][ctx] = {
