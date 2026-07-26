@@ -652,3 +652,114 @@ current best live-observable summary of what actually predicts outcome.
 This is now a reasonable basis for finally choosing an Action Class and
 freezing `w` (§18's open items 1-2) — no further broadening of Discovery
 is planned before that decision.
+
+## 21. Action Class decision, frozen 2026-07-26
+
+State Discovery ends here. §20's 6-way path-state is treated as the input;
+this section decides what a trade does in each state — a genuinely new
+decision, not derivable from the descriptive tables alone.
+
+**Action Class chosen: binary HOLD / EXIT** (a restriction of §13's
+Action Class I). No partial reduction, no dynamic risk band, no sizing
+change — those remain out of scope for this first intervention test, per
+the user's explicit preference to test the simplest action space before
+any more elaborate one. Two actions only:
+
+- **HOLD** — continue to the normal 4h close, unchanged from
+  `decision_rule_v1`'s existing baseline behavior.
+- **EXIT** — close the position immediately at the current price, before
+  the 4h close.
+
+**Trigger rule, using §20's 6 states directly (no new threshold or
+parameter introduced):**
+
+> At each of the existing checkpoints (1h, 2h, 3h, in order): if the
+> trade is **currently in a deep episode** at that checkpoint (states S1,
+> S3, S5 — "in episode 1/2/3+ (ongoing)", regardless of episode count),
+> EXIT immediately. If the trade is in S0, S2, or S4 (never deep, or
+> currently recovered — regardless of how many prior episodes it took to
+> get there), HOLD and continue to the next checkpoint, or to the normal
+> 4h close if no checkpoint remains.
+
+**Structural justification (not backtested-performance justification,
+per §8/§10's discipline):** §20 showed current status dominates and
+episode count is a secondary modifier of a trade that IS currently
+recovered — it is not, on its own, a reason to act on a trade that is
+currently clear. The trigger therefore keys on current status
+(deep/recovered) rather than on episode count or a cumulative "penalty
+counter," matching the user's stated conclusion: *"Episode-Status ist
+der primäre Action-Kandidat. Episodenzahl ist ein Modifikator der
+Erholungsqualität, nicht der primäre Exit-Trigger."*
+
+**Why no new `w` was fit:** the checkpoint grid (1h/2h/3h) already used
+throughout §11-§20 is reused as-is for the decision points, rather than
+fitting a bespoke exit-timing parameter on top of it. This keeps the
+intervention test free of any newly-introduced, backtest-chosen
+parameter — the only "parameters" here (deep threshold -0.75%, Def 1
+recovery, the checkpoint grid) were all already frozen for other reasons
+earlier in Phase D, not tuned for this action.
+
+**What this section explicitly does NOT claim:** that EXIT is the
+correct action, that 1h/2h/3h are the correct decision points, or that a
+richer action space (partial reduction, dynamic risk band) wouldn't do
+better. It claims only that this is the simplest, most directly
+data-motivated first intervention to actually test — on Discovery only,
+against the existing `decision_rule_v1`/baseline-hold-to-4h trades as the
+comparison, per §18's roadmap steps 4-5. 2026 remains untouched until
+this is backtested, reviewed, and (if it holds up) frozen.
+
+## 22. Result — Action Class I's first Discovery backtest does NOT clearly improve on holding
+
+`phase_d_action_class_i_v1.py` ran §21's rule on the same 1,064 Discovery
+trades as `decision_rule_v1`'s baseline. Reported without cherry-picking:
+
+| | Win rate | Mean | Median | P05 | Profit factor | Final equity | Max DD |
+|---|---|---|---|---|---|---|---|
+| Baseline (hold-to-4h) | 51.4% | -0.1306% | +0.0473% | -4.19% | 0.853 | 0.1731 | -82.94% |
+| Action Class I | 44.4% | -0.1668% | **-0.2403%** | -2.79% | 0.802 | 0.1329 | -86.58% |
+
+Action Class I is worse on win rate, mean, median, profit factor, final
+equity, AND max drawdown. The only metric that improves is P05 (tail
+return: -2.79% vs. -4.19%). This is a real, not a marginal, result: the
+baseline's median trade is a small winner (+0.0473%); Action Class I's
+median trade is a real loser (-0.2403%).
+
+**Why, given §20's clean descriptive structure:** the by-action breakdown
+shows the mechanism directly. For `exit_1h` (209 trades — the trades in
+state S1/S3/S5 at 1h), the intervention's realized outcome
+(mean -1.8832%, median -1.5701%) is *worse* than what holding to 4h would
+have produced for the exact same trades (mean -1.6563%, median -1.1844%).
+Only 24.4% of these trades go on to win if held (§11) — but that
+minority's gains are large enough, and the early-exit's locked-in loss
+plus round-trip fee/slippage cost is real enough, that cutting losses at
+1h has a *worse* expectation than holding, despite the correct and
+well-verified low win rate. Low P(winner) alone does not imply "exit is
+correct" once the size of the outcomes (not just their sign) is
+accounted for — this is exactly the asymmetric-payoff trap the project's
+median-over-mean discipline (see the house rules) exists to catch, now
+observed directly in an action, not just a raw distribution.
+
+**What this does and doesn't mean:**
+
+- It does **not** mean §11-§20's descriptive findings are wrong — the
+  state definitions, the landmark effect, and the episode-history
+  structure all still hold as *descriptions* of what happens.
+- It does mean Action Class I, specifically *as frozen in §21* (exit
+  immediately and unconditionally whenever currently in an episode, at
+  any of 1h/2h/3h), is not a good position-management rule on this
+  metric set. A win-rate-based intuition ("this state usually loses, so
+  exit it") does not survive contact with the actual payoff distribution.
+- The one genuine improvement (P05, tail risk) is a real risk/return
+  trade-off, not a free lunch — it comes at the cost of every other
+  metric, most importantly the median flipping from a small win to a
+  real loss.
+
+**Not yet frozen or ruled out:** whether some other trigger design (e.g.
+requiring the episode to persist for some duration before exiting,
+closer to §16's original `w`-based landmark idea, rather than exiting
+the instant a trade enters a deep episode) or some other Action Class
+(partial reduction, dynamic risk band) could do better. §21's specific
+binary immediate-exit rule is the one result established here — it is
+not evidence against position management in general, only against this
+first, simplest version of it. This is the natural next discussion,
+not decided in this document.
