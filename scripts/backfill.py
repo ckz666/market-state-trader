@@ -25,6 +25,7 @@ import asyncio
 import os
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -136,6 +137,53 @@ def to_df(data: list) -> pd.DataFrame:
     return df[~df.index.duplicated(keep="last")]
 
 
+def _window_slice(df: pd.DataFrame, state_ts, tf_delta: pd.Timedelta, window: int) -> pd.DataFrame:
+    """Fast equivalent of df[df.index + tf_delta <= state_ts].tail(window),
+    via binary search instead of an O(n) boolean mask over the WHOLE frame.
+    The mask approach re-scans the entire (multi-million-row, for 1m) frame on
+    every single hourly iteration and doesn't shrink as the backfill
+    progresses — effectively O(hours * n) total instead of O(hours * log n)."""
+    cutoff = state_ts - tf_delta
+    pos = df.index.searchsorted(cutoff, side="right")
+    return df.iloc[max(0, pos - window):pos]
+
+
+# Module-level (not a closure) so it's picklable for ProcessPoolExecutor.
+# Runs compile_state()/classify()/decide() — the exact same live code path —
+# in a worker process; this is the part that's expensive per-call (pattern
+# detection and vol-regime bimodality checks re-walk their whole input window
+# every time), which is invisible live (once/hour) but dominates a
+# tens-of-thousands-of-hours backfill, hence parallelizing across cores.
+def _compute_one(args):
+    state_ts, closed_1h, closed_4h, closed_15m, closed_1m = args
+    try:
+        state = compile_state(closed_1h, closed_4h, df_15m=closed_15m, df_1m=closed_1m, state_ts=state_ts)
+        context = classify(state)
+        atr_pct = state.state_1h.volatility.atr_norm
+        decision = decide(context, atr_pct, has_open_position=False, position_side=None)
+    except Exception as e:
+        return {"error": str(e), "state_ts": str(state_ts)}
+
+    direction = "none"
+    if decision.action.startswith("open_"):
+        direction = "long" if "long" in decision.action else "short"
+    elif context.direction_bias in ("long", "bullish") and decision.action != "hold":
+        direction = "long"
+    elif context.direction_bias in ("short", "bearish") and decision.action != "hold":
+        direction = "short"
+
+    return {
+        "timestamp": state.timestamp.isoformat(),
+        "direction": direction,
+        "state_price": state.ohlcv["close"],
+        "execution_price": state.ohlcv["close"],  # no live tick in the past — see module docstring
+        "context": context.name, "context_confidence": context.confidence,
+        "decision": decision.action, "decision_reason": decision.reason,
+        "market_state": state.to_dict(),
+        "source": "backfill",
+    }
+
+
 async def run(start_dt: datetime, end_dt: datetime, symbol: str, out_path: str,
               cache_dir: str, use_cache: bool, dry_run: bool):
     fetch_start = {tf: int((start_dt - LEAD_IN[tf]).timestamp() * 1000) for tf in WINDOW}
@@ -167,7 +215,7 @@ async def run(start_dt: datetime, end_dt: datetime, symbol: str, out_path: str,
     existing_ts = {c.timestamp for c in logger.candidates}
     print(f"{out_path}: {len(logger.candidates)} existing candidates (will be skipped, not duplicated)")
 
-    hours = pd.date_range(start_dt.replace(minute=0, second=0, microsecond=0), end_dt, freq="1h")
+    hours = list(pd.date_range(start_dt.replace(minute=0, second=0, microsecond=0), end_dt, freq="1h"))
     # Indicators like ADX (window=14) crash outright on too-short input rather
     # than returning NaN. Live never hits this (main.py always fetches a full
     # window from an exchange with years of prior history) — but the very
@@ -175,62 +223,55 @@ async def run(start_dt: datetime, end_dt: datetime, symbol: str, out_path: str,
     # available exchange history, genuinely can't have a full lead-in yet.
     # Matches the >30 threshold compiler.py already uses for its 4h guard.
     MIN_BARS = 30
+    # Building+compute happens in batches so peak memory stays bounded (each
+    # task carries small per-hour window slices, but building ALL of them for
+    # a multi-year range upfront would hold several GB at once) — and so
+    # checkpoints happen regularly rather than only at the very end.
+    BATCH_SIZE = 2000
+    n_workers = max(1, (os.cpu_count() or 4) - 1)
+    print(f"Computing {len(hours)} candidate-hours using {n_workers} worker processes "
+          f"(in batches of {BATCH_SIZE})...")
 
     added, skipped_existing, skipped_gap, skipped_error = 0, 0, 0, 0
     t0 = time.monotonic()
 
-    for state_ts in hours:
-        if state_ts.isoformat() in existing_ts:
-            skipped_existing += 1
-            continue
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        for batch_start in range(0, len(hours), BATCH_SIZE):
+            batch = hours[batch_start:batch_start + BATCH_SIZE]
+            tasks = []
+            for state_ts in batch:
+                if state_ts.isoformat() in existing_ts:
+                    skipped_existing += 1
+                    continue
+                closed_1h = _window_slice(df_1h, state_ts, pd.Timedelta(hours=1), WINDOW["1h"])
+                if len(closed_1h) < MIN_BARS:
+                    skipped_gap += 1
+                    continue
+                last_closed_open = closed_1h.index[-1]
+                if last_closed_open + pd.Timedelta(hours=1) != state_ts:
+                    skipped_gap += 1  # no 1h candle closed exactly at this hour (exchange data gap)
+                    continue
+                closed_4h = _window_slice(df_4h, state_ts, pd.Timedelta(hours=4), WINDOW["4h"])
+                closed_15m = _window_slice(df_15m, state_ts, pd.Timedelta(minutes=15), WINDOW["15m"])
+                closed_1m = _window_slice(df_1m, state_ts, pd.Timedelta(minutes=1), WINDOW["1m"])
+                tasks.append((state_ts, closed_1h, closed_4h, closed_15m, closed_1m))
 
-        closed_1h = df_1h[df_1h.index + pd.Timedelta(hours=1) <= state_ts].tail(WINDOW["1h"])
-        if len(closed_1h) < MIN_BARS:
-            skipped_gap += 1
-            continue
-        last_closed_open = closed_1h.index[-1]
-        if last_closed_open + pd.Timedelta(hours=1) != state_ts:
-            skipped_gap += 1  # no 1h candle actually closed exactly at this hour (exchange data gap)
-            continue
+            if tasks:
+                for result in executor.map(_compute_one, tasks, chunksize=20):
+                    if "error" in result:
+                        skipped_error += 1
+                        print(f"  ! skipped {result['state_ts']}: {result['error']}")
+                        continue
+                    logger.candidates.append(Candidate(**result))
+                    added += 1
 
-        closed_4h = df_4h[df_4h.index + pd.Timedelta(hours=4) <= state_ts].tail(WINDOW["4h"])
-        closed_15m = df_15m[df_15m.index + pd.Timedelta(minutes=15) <= state_ts].tail(WINDOW["15m"])
-        closed_1m = df_1m[df_1m.index + pd.Timedelta(minutes=1) <= state_ts].tail(WINDOW["1m"])
-
-        try:
-            state = compile_state(closed_1h, closed_4h, df_15m=closed_15m, df_1m=closed_1m, state_ts=state_ts)
-            context = classify(state)
-            atr_pct = state.state_1h.volatility.atr_norm
-            decision = decide(context, atr_pct, has_open_position=False, position_side=None)
-        except Exception as e:
-            skipped_error += 1
-            print(f"  ! skipped {state_ts}: {e}")
-            continue
-
-        direction = "none"
-        if decision.action.startswith("open_"):
-            direction = "long" if "long" in decision.action else "short"
-        elif context.direction_bias in ("long", "bullish") and decision.action != "hold":
-            direction = "long"
-        elif context.direction_bias in ("short", "bearish") and decision.action != "hold":
-            direction = "short"
-
-        logger.candidates.append(Candidate(
-            timestamp=state.timestamp.isoformat(),
-            direction=direction,
-            state_price=state.ohlcv["close"],
-            execution_price=state.ohlcv["close"],  # no live tick in the past — see module docstring
-            context=context.name, context_confidence=context.confidence,
-            decision=decision.action, decision_reason=decision.reason,
-            market_state=state.to_dict(),
-            source="backfill",
-        ))
-        added += 1
-
-        if added % 500 == 0:
+            done = min(batch_start + BATCH_SIZE, len(hours))
             elapsed = time.monotonic() - t0
-            print(f"  ...{added} candidates so far ({state_ts}), {elapsed:.0f}s elapsed")
-            logger._save()  # periodic checkpoint so a crash doesn't lose everything
+            rate = done / elapsed if elapsed > 0 else 0
+            remaining_s = (len(hours) - done) / rate if rate > 0 else 0
+            print(f"  ...{added} candidates so far ({done}/{len(hours)} hours processed, "
+                  f"{elapsed:.0f}s elapsed, ~{remaining_s/60:.1f}min remaining)")
+            logger._save()  # checkpoint every batch so a crash doesn't lose everything
 
     print(f"Computed {added} new candidates ({skipped_existing} already present, "
           f"{skipped_gap} skipped for data gaps, {skipped_error} skipped on error)")
