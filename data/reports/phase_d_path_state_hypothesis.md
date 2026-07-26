@@ -173,12 +173,62 @@ trying all four:
   a small number of empirically-defined path-state buckets rather than a
   fitted formula). Structurally the closest match to what v4 actually
   found (early + deep + low-vol behaves differently from late + same-depth
-  + high-vol) — currently the most likely candidate, but not yet chosen.
+  + high-vol).
+- **Class D' — recovery-state** (a refinement of D, added after §1's
+  `DD_current` vs. `MAE_so_far` comparison was actually run): three
+  qualitatively distinct path states per trade at time t, instead of one
+  drawdown number —
+  1. never reached a deep drawdown (current behavior looks "normal"),
+  2. reached a deep drawdown but has since recovered from it (path
+     survived stress; current state improved relative to the low point),
+  3. reached a deep drawdown and is still there (current state
+     unimproved).
 
-## 10. Next step
+  This is not a new dimension on top of D — it is D's drawdown axis split
+  into two (`DD_current`, `MAE_so_far`) instead of collapsed into one,
+  because §1 showed those two are not interchangeable (Discovery Q5 @ 1h,
+  DD<=-1.0%: `DD_current` 24% (n=155) vs. `MAE_so_far` 35% (n=331) — same
+  volatility, same time, same threshold, different outcome distribution
+  depending on which drawdown definition is used). A single scalar
+  drawdown feature (as in plain Class D) cannot represent this distinction;
+  a state built from both can.
 
-Not code. Decide which mechanism class from §9 to commit to, and write that
-choice down with its structural justification, before writing
-`scripts/phase_d_*.py`. Once a class is chosen, Discovery may work out its
-internal thresholds/buckets on 2020-2025 only, followed by a single,
-unmodified 2026 validation run — no iteration against 2026 results.
+## 10. Chosen mechanism class
+
+**Class D' (recovery-state), chosen 2026-07-26.** Justification: it is the
+only candidate class that represents the `DD_current` != `MAE_so_far`
+finding directly, rather than discarding it into a single drawdown number.
+Not chosen by backtesting D vs. D' against each other — chosen because D'
+is structurally the only class consistent with a result Discovery already
+demonstrated (§1), which is exactly the "structural grounds, not
+performance grounds" bar §8 requires.
+
+This is a class choice, not a finished rule. Left open, deliberately, for
+Discovery to define empirically on 2020-2025 only (not decided here, to
+avoid quietly baking in a threshold under the cover of "just choosing a
+class"):
+
+- What counts as "reached a deep drawdown" — which threshold, and does it
+  vary by volatility quintile (plausible, given §1/v4's finding that the
+  same drawdown number means different things at different volatility
+  levels)?
+- What counts as "recovered" for state 2 — back above the threshold
+  entirely, or merely off the low point by some margin? This distinction
+  is currently undefined and must not be silently fixed later; Discovery's
+  first job is to test whether the three-state split is even sensitive to
+  this choice before treating any specific definition as settled.
+- Whether the three states are enough, or whether "recovered how long ago"
+  turns out to matter too (a fourth path dimension, time-since-low-point,
+  not yet in scope — only add it if the three-state split proves
+  insufficient, not preemptively).
+
+## 11. Next step
+
+Not code yet, but closer: Discovery work to define the "deep drawdown"
+threshold(s) and the "recovered" boundary for Class D', on 2020-2025 only,
+using the same MIN_CELL_N / descriptive discipline as v1-v4 — i.e. still
+measuring win-rate-by-state-bucket, not yet fitting or optimizing an exit
+action. Only after that empirical definition is frozen does an actual
+`scripts/phase_d_*.py` position-management mechanism get written, followed
+by a single, unmodified 2026 validation run — no iteration against 2026
+results.
