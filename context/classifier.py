@@ -74,8 +74,11 @@ def classify(state: MarketState) -> MarketContext:
                 rationale=f"Price extended (bb={bb:.2f}), bearish momentum overextended → avoid short",
                 suggested_action="avoid_short",
             )
-    # Lower extension: price below lower BB
-    if bb < -config.BB_EXTENDED:
+    # Lower extension: price below lower BB.
+    # bollinger_pband() is anchored at 0.0=lower band / 1.0=upper band, not
+    # symmetric around 0 — so the mirror of "bb > BB_EXTENDED" (1.0) is
+    # "bb < 0.0", not "bb < -BB_EXTENDED" (which would almost never fire).
+    if bb < 0.0:
         if mom_dir == "bearish":
             return MarketContext(
                 name="extended", direction_bias="neutral",

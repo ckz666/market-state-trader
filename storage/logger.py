@@ -1,6 +1,7 @@
 """
 Storage — persists entry candidates with full MarketState + outcomes.
 """
+import bisect
 import json
 import os
 from datetime import datetime, timezone
@@ -12,9 +13,10 @@ import mst_config as config
 
 @dataclass
 class Candidate:
-    timestamp: str                         # candle close time (ISO 8601 UTC)
+    timestamp: str                         # candle close time (ISO 8601 UTC) == the state's timestamp
     direction: str                         # "long" | "short" | "none"
-    price: float
+    state_price: float                     # 1h candle close price → state/forward-return analysis
+    execution_price: float                 # live price at decision time → trading/execution analysis
     context: str
     context_confidence: float
     decision: str
@@ -48,8 +50,25 @@ class CandidateLogger:
             self.candidates = self.candidates[-5000:]
         self._save()
 
-    def update_outcomes(self, current_price: float):
+    # How close a 1m close has to be to the exact target timestamp to count
+    # as "the" price at that time — guards against silently using a much
+    # later price (e.g. after the bot was offline) and mislabeling it.
+    OUTCOME_TOLERANCE_SEC = 120
+
+    def update_outcomes(self, price_history: dict):
+        """price_history: {ts_ms: close_price} of 1m candles, e.g.
+        MarketStateTrader.price_history. Measures each forward return at the
+        exact target timestamp (state time + window) using the closest 1m
+        close within OUTCOME_TOLERANCE_SEC — not "whatever price is live
+        when the bot happens to check", which drifts with cycle timing and
+        breaks entirely across downtime.
+        """
+        if not price_history:
+            return
+        sorted_ts = sorted(price_history.keys())
         now = datetime.now(timezone.utc)
+        now_ms = int(now.timestamp() * 1000)
+        tolerance_ms = self.OUTCOME_TOLERANCE_SEC * 1000
         changed = False
         for c in self.candidates:
             try:
@@ -58,21 +77,25 @@ class CandidateLogger:
                     cts = cts.replace(tzinfo=timezone.utc)
             except (ValueError, TypeError):
                 continue
-            age = (now - cts).total_seconds()
-            if age < 0:
-                continue
+            cts_ms = int(cts.timestamp() * 1000)
             for window_name, window_sec in self.OUTCOME_WINDOWS.items():
                 attr = f"forward_return_{window_name}"
                 if getattr(c, attr) is not None:
                     continue
-                if age < window_sec:
-                    continue
-                # Raw forward return — direction-agnostic
-                ret = (current_price - c.price) / c.price
+                target_ms = cts_ms + window_sec * 1000
+                if target_ms > now_ms:
+                    continue  # target time hasn't happened yet
+                idx = bisect.bisect_left(sorted_ts, target_ms)
+                if idx >= len(sorted_ts) or sorted_ts[idx] - target_ms > tolerance_ms:
+                    continue  # no 1m close near enough the target — leave pending
+                target_price = price_history[sorted_ts[idx]]
+                # Raw forward return — direction-agnostic, measured from the
+                # state's own close price, not the live price at eval time.
+                ret = (target_price - c.state_price) / c.state_price
                 setattr(c, attr, round(ret, 6))
                 c.outcome_measured_at[window_name] = now.isoformat()
-                target = cts + __import__('datetime').timedelta(seconds=window_sec)
-                c.outcome_target_time[window_name] = target.isoformat()
+                target_dt = datetime.fromtimestamp(target_ms / 1000, tz=timezone.utc)
+                c.outcome_target_time[window_name] = target_dt.isoformat()
                 changed = True
         if changed:
             self._save()
@@ -131,7 +154,11 @@ class CandidateLogger:
             for d in data.get("candidates", []):
                 self.candidates.append(Candidate(
                     timestamp=d["timestamp"], direction=d.get("direction", "long"),
-                    price=d["price"], context=d.get("context", "unknown"),
+                    # pre-rename records only had a single "price" (the live
+                    # execution price) — reuse it for both until fresh data arrives
+                    state_price=d.get("state_price", d.get("price")),
+                    execution_price=d.get("execution_price", d.get("price")),
+                    context=d.get("context", "unknown"),
                     context_confidence=d.get("context_confidence", 0),
                     decision=d.get("decision", "hold"),
                     decision_reason=d.get("decision_reason", ""),

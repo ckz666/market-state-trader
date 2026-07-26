@@ -33,6 +33,7 @@ class MarketStateTrader:
         self.log: list[dict] = []
         self._last_1h_ts = None
         self.ohlcv_cache: dict = {"1m": [], "15m": [], "1h": [], "4h": []}
+        self.price_history: dict[int, float] = {}  # 1m close ts_ms -> price, for exact outcome lookups
 
     def _log(self, level: str, msg: str):
         entry = {"ts": datetime.now(timezone.utc).isoformat(), "level": level, "msg": msg}
@@ -51,6 +52,16 @@ class MarketStateTrader:
             )
             raw_1m, raw_15m, raw_1h, raw_4h, ticker = results
             self.live_price = ticker["last"]
+            now = pd.Timestamp.now('UTC')
+
+            # Merge fresh 1m closes into the price-history buffer used for
+            # exact-target-time outcome measurement, then drop anything
+            # older than the longest outcome horizon (4h) needs.
+            for r in raw_1m:
+                self.price_history[int(r[0])] = float(r[4])
+            cutoff_ms = int(now.timestamp() * 1000) - 5 * 3600 * 1000
+            if len(self.price_history) > 400:
+                self.price_history = {t: p for t, p in self.price_history.items() if t >= cutoff_ms}
 
             def to_df(data):
                 df = pd.DataFrame(data, columns=["timestamp","open","high","low","close","volume"])
@@ -77,7 +88,7 @@ class MarketStateTrader:
                 self._log("TRADE", f"{trigger.upper()} @ ${self.live_price:,.2f} | PnL: ${record['pnl']:+.2f}")
 
             # ALWAYS update outcomes and equity
-            self.logger.update_outcomes(self.live_price)
+            self.logger.update_outcomes(self.price_history)
             self.paper.record_equity(self.live_price)
 
             # Heartbeat: log occasionally so the UI does not look dead
@@ -89,14 +100,14 @@ class MarketStateTrader:
                 self._log("INFO", f"Cycle {self.cycle_count} | ${self.live_price:,.2f}{pos_info}")
 
             # Only evaluate MarketState on NEW completed 1h candle
-            now = pd.Timestamp.now('UTC')
             closed_1h = df_1h[df_1h.index + pd.Timedelta(hours=1) <= now]
             if len(closed_1h) < 2:
                 return
-            last_closed_ts = closed_1h.index[-1]
-            if last_closed_ts == self._last_1h_ts:
+            last_closed_open = closed_1h.index[-1]   # OHLCV index = candle OPEN time
+            if last_closed_open == self._last_1h_ts:
                 return
-            self._last_1h_ts = last_closed_ts
+            self._last_1h_ts = last_closed_open
+            state_ts = last_closed_open + pd.Timedelta(hours=1)  # the candle's CLOSE time
 
             # ── Use only completed candles (time-gated, not iloc[:-1]) ──
             closed_4h = df_4h[df_4h.index + pd.Timedelta(hours=4) <= now]
@@ -106,7 +117,7 @@ class MarketStateTrader:
             # State timestamp = the candle close time (not datetime.now())
             state = compile_state(closed_1h, closed_4h,
                                   df_15m=closed_15m, df_1m=closed_1m,
-                                  state_ts=last_closed_ts)
+                                  state_ts=state_ts)
             self.last_state = state
 
             # Context
@@ -149,7 +160,9 @@ class MarketStateTrader:
             # Log
             self.logger.add(Candidate(
                 timestamp=state.timestamp.isoformat(),
-                direction=direction, price=self.live_price,
+                direction=direction,
+                state_price=state.ohlcv["close"],      # 1h candle close → for state/forward-return analysis
+                execution_price=self.live_price,       # live price at decision time → for trading/execution analysis
                 context=context.name, context_confidence=context.confidence,
                 decision=decision.action, decision_reason=decision.reason,
                 market_state=state.to_dict(),
