@@ -31,9 +31,22 @@ class MarketStateTrader:
         self.last_context = None
         self.last_decision = None
         self.log: list[dict] = []
-        self._last_1h_ts = None
+        # Dedup marker (candle CLOSE / state timestamp) for "evaluate once per
+        # closed 1h candle". Restored from the most recent persisted candidate
+        # so a restart within the same hour doesn't re-log a duplicate for a
+        # candle that was already processed before shutdown.
+        self._last_state_ts = self._restore_last_state_ts()
         self.ohlcv_cache: dict = {"1m": [], "15m": [], "1h": [], "4h": []}
         self.price_history: dict[int, float] = {}  # 1m close ts_ms -> price, for exact outcome lookups
+
+    def _restore_last_state_ts(self):
+        if not self.logger.candidates:
+            return None
+        try:
+            ts = pd.Timestamp(self.logger.candidates[-1].timestamp)
+            return ts.tz_localize('UTC') if ts.tzinfo is None else ts
+        except (ValueError, TypeError):
+            return None
 
     def _log(self, level: str, msg: str):
         entry = {"ts": datetime.now(timezone.utc).isoformat(), "level": level, "msg": msg}
@@ -104,10 +117,10 @@ class MarketStateTrader:
             if len(closed_1h) < 2:
                 return
             last_closed_open = closed_1h.index[-1]   # OHLCV index = candle OPEN time
-            if last_closed_open == self._last_1h_ts:
-                return
-            self._last_1h_ts = last_closed_open
             state_ts = last_closed_open + pd.Timedelta(hours=1)  # the candle's CLOSE time
+            if state_ts == self._last_state_ts:
+                return
+            self._last_state_ts = state_ts
 
             # ── Use only completed candles (time-gated, not iloc[:-1]) ──
             closed_4h = df_4h[df_4h.index + pd.Timedelta(hours=4) <= now]
