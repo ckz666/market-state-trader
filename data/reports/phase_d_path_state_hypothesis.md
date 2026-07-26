@@ -394,3 +394,53 @@ rather than on elapsed time in general). Any Action Class chosen next
 should condition on runway-at-deep-episode-start and the eventual
 recovered/not-recovered split, not on a continuous recovery-duration
 gradient.
+
+## 16. Revision — Recovery-Window (landmark) framing, and its result
+
+§15's "never recovered by close" cut is only knowable in hindsight, at
+the close itself — it cannot be used as a live signal. The corrected
+question is a landmark one:
+
+> P(winner | deep episode started at t0, not yet recovered at t0 + w)
+
+using only information available at t0+w, for a range of window widths w
+— never peeking past t0+w to decide the split itself (the eventual
+outcome is still used afterward to measure the split's value, same
+information-boundary discipline as §4).
+
+`phase_d_recovery_window_v1.py` ran this on the same population/threshold.
+**Section A result — clean and monotone, unlike §15's duration buckets:**
+
+| Window w | Recovered by t0+w | Not yet recovered by t0+w |
+|---|---|---|
+| 15m | 35.0% (n=515) | 28.5% (n=137) |
+| 30m | 35.8% (n=537) | 25.5% (n=102) |
+| 60m | 37.5% (n=547) | 13.4% (n=67) |
+| 90m | 38.6% (n=536) | 5.7% (n=53) |
+| 120m | 39.1% (n=504) | 4.9% (n=41) |
+
+The "recovered" group stays roughly flat (~35-39%); the "not yet
+recovered" group falls steadily from 28.5% to 4.9% as w grows — this time
+a real gradient, not noise (monotone, decent n at every step).
+
+**Section B — runway-controlled, to rule out the confound §15 raised:**
+within "not yet recovered by t0+w", split by how much runway is still
+left afterward (>= 60m vs. < 60m). The decay persists in the *ample*-
+runway rows alone (30.2% @15m -> 28.0% @30m -> 15.3% @60m -> 6.8% @90m ->
+6.5% @120m, all with n>=31) — so this is not merely a restatement of "less
+time left." Even when a trade still has a full hour or more of runway
+remaining, having not yet recovered by t0+w is itself informative. The
+tight-runway rows have too few trades (n=8-10) to read.
+
+**Conclusion:** the recovery-window landmark effect is the strongest,
+cleanest, most clearly live-observable structure found in Phase D so far
+— stronger than §11's state definition alone and more precise than §13's
+original duration hypothesis. It is now a legitimate candidate basis for
+an Action Class decision (§13's Classes I-IV), since it answers the
+question §13 originally posed but got wrong: *is there a point at which
+the absence of recovery itself becomes a robust, live signal?* Yes —
+starting somewhere around w=60m, and clearly by w=90-120m.
+
+**Still not decided:** which Action Class, and at which specific w. That
+remains the next step, deliberately not decided in the same breath as
+confirming the underlying structure.
