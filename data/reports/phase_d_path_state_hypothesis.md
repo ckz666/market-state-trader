@@ -870,3 +870,56 @@ Discovery's.
 
 The next commit after this one is the OOS run itself, using this section
 as the fixed yardstick.
+
+## 25. OOS result and classification (2026-07-26)
+
+`phase_d_action_class_ii_oos_v1.py` ran the exact frozen rule (§24) on
+2026. First and most important fact about this run: **`decision_rule_v1`
+only produced 39 trades in the 2026 (partial-year) period, and the rule
+only ever triggered on 6 of them** (2 at episode 1, 4 at episode 3+;
+episode 2 never occurred at all in this small sample).
+
+| | n | Win rate | Mean | Median | P05 | Profit factor | Final equity | Max DD |
+|---|---|---|---|---|---|---|---|---|
+| Baseline (hold-to-4h) | 39 | 51.3% | -0.0893% | +0.1787% | -3.09% | 0.868 | 0.9609 | -15.36% |
+| Action Class II (w=120m) | 39 | 51.3% | -0.0289% | +0.1787% | -2.42% | 0.953 | 0.9847 | -12.63% |
+
+**Primary metric (paired delta-return, per §24):** mean delta +0.0604%,
+median delta 0.0000% (84.6% of trades untouched by the rule, so delta=0
+for those by construction). Only 3 of 39 trades (7.7%) have a positive
+delta.
+
+**Classification, applying §24's fixed criteria as written:**
+
+Taken at face value, every primary metric points the same direction as
+Discovery — paired delta mean positive, profit factor up (0.953 vs.
+0.868), max drawdown improved (-12.63% vs. -15.36%) — which is the
+literal **A — OOS confirmed** criterion. **This document does not stop
+there and call it confirmed**, because doing so would overstate what 6
+affected trades (2 + 4, from two of three episode buckets, the third
+bucket never observed at all) can actually demonstrate. This is closer
+to **A, but at essentially no statistical power** — directionally
+consistent with Discovery, not a validation in the sense the pre-
+registration intended when it was written against Discovery's n=1,064.
+
+**Why this isn't classified as a clean A:** the entire result rests on
+6 trades. A single different trade in `timeout_exit_episode_1` (n=2)
+could flip its sign; `timeout_exit_episode_3+` (n=4) also has no
+independent statistical weight. The win rate and median are literally
+unchanged from baseline (identical to four decimal places) because nine
+in ten 2026 trades never encountered the rule at all — 2026 (a partial
+year to date) simply hasn't produced enough `decision_rule_v1` signals,
+let alone enough deep episodes, for this specific question to be
+answered with any power yet.
+
+**Honest bottom line:** the OOS run does not refute the Discovery
+finding (no sign reversal, no metric moving materially against the
+rule) — but it also cannot be read as confirmation in any statistically
+meaningful sense, given the sample. The correct action per §24 is not to
+retune or extend Discovery further (the hypothesis and `w` stay frozen
+exactly as decided), but to treat this as an inconclusive-by-sample-size
+result: consistent with, not proof of, the Discovery finding. Whether to
+adopt `w=120m` Recovery-Timeout going forward, keep it provisional
+pending more 2026 data (the live paper-trading service continues
+collecting `data/candidates.json`), or hold off, is a decision for the
+user — not resolved by this result alone.
