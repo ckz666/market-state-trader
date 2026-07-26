@@ -287,7 +287,12 @@ consequences_v1.py` then showed State 3 is not static: P(winner|S3)
 of S3 decays the same way (§C of that report). This directly motivates
 §13 below.
 
-## 13. Execution-mechanic hypothesis (Time-Conditioned Recovery Management), frozen 2026-07-26
+## 13. Execution-mechanic hypothesis (Time-Conditioned Recovery Management), frozen 2026-07-26 — SUPERSEDED, see §18
+
+**Superseded 2026-07-26.** `duration_in_state_3` (this section's central
+variable) showed no reliable gradient once tested (§15) — see §18 for the
+replacement hypothesis. Left in place, unedited, as the record of what
+was tried and why it didn't hold; do not implement against this section.
 
 > When a trade enters recovery-state 3, position management should not
 > condition on S3 alone, but on how long the trade has continuously
@@ -484,3 +489,59 @@ through `phase_d_recovery_window_v1.py`) were re-verified:
   handling, checkpoint monotonicity, `MIN_CELL_N` gating, threshold
   direction, and the `DD_current`/`MAE_so_far` distinction all checked
   out).
+
+## 18. Revision — Recovery-Window hypothesis (replaces §13), frozen 2026-07-26
+
+§13's hypothesis (`duration_in_state_3` as the operative variable) is
+replaced, not patched. §15 showed it directly: among trades that do
+recover, how long they took shows no reliable gradient (34.8/33.3/56.2/
+38.1% across duration buckets — not monotone). What the data actually
+supports, confirmed by §16's landmark test and sharpened by §17's
+verification pass:
+
+> A deep episode opens a time-bounded recovery window. The **absence** of
+> recovery within that window is a live-observable, increasingly negative
+> path signal — `P(winner | no recovery by t0+w)` degrades monotonically
+> in w and survives runway control (§16). Recovery *within* the window is
+> not, however, a permanent clearance: 40.0% of trades that recover from
+> their first deep episode re-enter the deep state later and are still
+> there at the actual 4h close (§17). "Recovered" should be read as
+> "cleared this episode," not "safe for the rest of the hold."
+
+Formally: the operative variable is `P(winner | no recovery by t0+w)`,
+not `duration_in_state_3` and not a permanent `recovered` flag.
+
+### Two things this section deliberately does NOT do
+
+1. **Does not pick a value for `w`.** §16's table shows the effect
+   starting around w=60m and clearly present by w=90-120m — that is a
+   Discovery finding about where the structure lives, not a selection of
+   "the best w." Choosing a specific w to act on is its own design
+   decision, to be made explicitly (and justified structurally, not by
+   picking whichever w backtests best — the same discipline as §8/§10),
+   not smuggled in here under the cover of restating the hypothesis.
+2. **Does not yet define re-entry handling.** The 40% backslide rate
+   means a real execution mechanic cannot use a single permanent
+   `recovered = True` flag per trade. Each deep episode needs its own,
+   independently-evaluated recovery window — episode 2 is not "still
+   covered" by episode 1's recovery. This must be defined explicitly
+   before any execution code exists, not assumed.
+
+### Confirmed roadmap from here (nothing beyond step 1 done yet)
+
+1. Choose an Action Class from §13's list (I-IV) on structural grounds —
+   Action Class I (delayed binary exit keyed to the recovery window) is
+   the closest fit to what §16/§18 actually found, but this is a
+   recommendation for the next discussion, not decided in this document.
+2. Freeze a specific `w` as a design decision, with its justification
+   written down (not picked because it backtests best).
+3. Formally define episode re-entry handling (each deep episode gets its
+   own independent recovery-window evaluation).
+4. Only then: work out any remaining discovery-level mechanic detail on
+   2020-2025.
+5. Execution backtest on Discovery.
+6. Freeze the mechanic.
+7. Only then: a single, unmodified 2026 OOS validation run.
+
+No code for any of steps 1-6 exists yet. This section is the hypothesis
+freeze that must precede it.
