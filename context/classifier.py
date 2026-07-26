@@ -46,7 +46,8 @@ def classify(state: MarketState) -> MarketContext:
     trend_dir = state.state_1h.trend.direction
     mom_str = state.state_1h.momentum.strength
     atr = state.state_1h.volatility.atr_norm
-    squeeze_active = state.state_1h.momentum.squeeze_fired
+    # squeeze_fired = just exited compression (breakout signal, NOT compression)
+    # squeeze would be active if we had it in state — for now, only use ATR
 
     # Multi-TF enrichments
     st_15m_rejection = state.short_term_15m.upper_rejection > 0.3 or state.short_term_15m.lower_rejection > 0.3
@@ -78,8 +79,10 @@ def classify(state: MarketState) -> MarketContext:
                 suggested_action="avoid_short",
             )
 
-    # 2. COMPRESSED
-    if squeeze_active or atr < 0.005:
+    # 2. COMPRESSED — low volatility, no clear direction
+    # Note: squeeze_fired means breakout just happened, NOT compressed.
+    # Only use ATR for compression detection.
+    if atr < 0.005:
         return MarketContext(
             name="compressed", direction_bias="neutral",
             confidence=0.6,

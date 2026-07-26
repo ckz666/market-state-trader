@@ -9,7 +9,6 @@ Compiles one enriched MarketState with timeframes in their specific roles:
 """
 import pandas as pd
 import numpy as np
-from datetime import datetime
 from typing import Optional
 
 from observation.models import (
@@ -20,8 +19,15 @@ from observation.models import (
 
 def compile(df_1h: pd.DataFrame, df_4h: pd.DataFrame,
             df_15m: Optional[pd.DataFrame] = None,
-            df_1m: Optional[pd.DataFrame] = None) -> MarketState:
-    """Compile full multi-TF MarketState."""
+            df_1m: Optional[pd.DataFrame] = None,
+            state_ts=None) -> MarketState:
+    """Compile full multi-TF MarketState.
+
+    Args:
+        state_ts: Candle close timestamp for the state. Defaults to now().
+    """
+    if state_ts is None:
+        state_ts = pd.Timestamp.now(tz="UTC")
 
     from indicators.ml_signal import get_indicators, detect_market_structure
 
@@ -57,6 +63,7 @@ def compile(df_1h: pd.DataFrame, df_4h: pd.DataFrame,
 
     rsi = indicators.get("rsi", 50)
     macd = indicators.get("macd_diff", 0)
+    sq_active = bool(indicators.get("squeeze_active", 0))
     sq_fired = bool(indicators.get("squeeze_fired", 0))
     macd_bull, rsi_bull = macd > 0, rsi > 50
     mom_dir = "bullish" if (macd_bull and rsi_bull) else ("bearish" if (not macd_bull and not rsi_bull) else "neutral")
@@ -65,7 +72,7 @@ def compile(df_1h: pd.DataFrame, df_4h: pd.DataFrame,
     accel = min(abs(sq_mom) * 3, 1) if ((macd_bull and sq_mom > 0) or (not macd_bull and sq_mom < 0)) else -min(abs(sq_mom) * 3, 1)
     momentum = MomentumState(direction=mom_dir, strength=round(mom_str, 4),
                              acceleration=round(accel, 4), rsi=round(rsi, 2),
-                             macd_norm=round(macd, 6), squeeze_fired=sq_fired)
+                             macd_norm=round(macd, 6), squeeze_fired=sq_fired, squeeze_active=sq_active)
 
     from indicators.vol_regime import classify_vol_regime
     vol = classify_vol_regime(df_1h)
@@ -148,12 +155,15 @@ def compile(df_1h: pd.DataFrame, df_4h: pd.DataFrame,
     )
 
     return MarketState(
-        timestamp=datetime.now(),
+        timestamp=state_ts,
         context_4h=context_4h, state_1h=state_1h,
         short_term_15m=short_term, micro_1m=micro,
         ohlcv={"open": float(df_1h["open"].iloc[-1]), "high": float(df_1h["high"].iloc[-1]),
                "low": float(df_1h["low"].iloc[-1]), "close": c,
                "volume": float(df_1h["volume"].iloc[-1])},
+        source_ts={"1h": str(df_1h.index[-1]), "4h": str(df_4h.index[-1]),
+                   "15m": str(df_15m.index[-1]) if df_15m is not None and len(df_15m) > 0 else "",
+                   "1m": str(df_1m.index[-1]) if df_1m is not None and len(df_1m) > 0 else ""},
     )
 
 

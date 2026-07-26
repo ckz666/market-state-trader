@@ -70,25 +70,35 @@ class MarketStateTrader:
                 "4h": [{"t": r[0], "o": r[1], "h": r[2], "l": r[3], "c": r[4]} for r in raw_4h[-24:]],
             }
 
-            # Only evaluate when a NEW 1h candle has COMPLETED
-            # Use the 2nd-to-last candle (last fully closed one)
-            last_closed_ts = df_1h.index[-2]
-            if last_closed_ts == self._last_1h_ts:
-                self.logger.update_outcomes(self.live_price)
-                self.paper.record_equity(self.live_price)
-                return
-            self._last_1h_ts = last_closed_ts
-
-            # SL/TP
+            # ── ALWAYS check SL/TP (every cycle, not just on new candle) ──
             trigger = self.paper.check_sl_tp(self.live_price)
             if trigger:
                 record = self.paper.close(self.live_price, reason=trigger)
                 self._log("TRADE", f"{trigger.upper()} @ ${self.live_price:,.2f} | PnL: ${record['pnl']:+.2f}")
 
-            # Compile state
-                        # Use only COMPLETED candles (drop the in-progress last one)
-            state = compile_state(df_1h.iloc[:-1], df_4h.iloc[:-1],
-                                  df_15m=df_15m.iloc[:-1], df_1m=df_1m.iloc[:-1])
+            # ALWAYS update outcomes and equity
+            self.logger.update_outcomes(self.live_price)
+            self.paper.record_equity(self.live_price)
+
+            # Only evaluate MarketState on NEW completed 1h candle
+            now = pd.Timestamp.now(tz="UTC")
+            closed_1h = df_1h[df_1h.index + pd.Timedelta(hours=1) <= now]
+            if len(closed_1h) < 2:
+                return
+            last_closed_ts = closed_1h.index[-1]
+            if last_closed_ts == self._last_1h_ts:
+                return
+            self._last_1h_ts = last_closed_ts
+
+            # ── Use only completed candles (time-gated, not iloc[:-1]) ──
+            closed_4h = df_4h[df_4h.index + pd.Timedelta(hours=4) <= now]
+            closed_15m = df_15m[df_15m.index + pd.Timedelta(minutes=15) <= now]
+            closed_1m = df_1m[df_1m.index + pd.Timedelta(minutes=1) <= now]
+
+            # State timestamp = the candle close time (not datetime.now())
+            state = compile_state(closed_1h, closed_4h,
+                                  df_15m=closed_15m, df_1m=closed_1m,
+                                  state_ts=last_closed_ts)
             self.last_state = state
 
             # Context
@@ -102,12 +112,13 @@ class MarketStateTrader:
             decision = decide(context, atr_pct, has_open_position=has_pos, position_side=pos_side)
             self.last_decision = decision
 
-            direction = "long"
+            # Direction: never default to "long" — "none" for hold/wait/neutral
+            direction = "none"
             if decision.action.startswith("open_"):
                 direction = "long" if "long" in decision.action else "short"
-            elif context.direction_bias in ("bullish", "long"):
+            elif context.direction_bias == "long" and decision.action != "hold":
                 direction = "long"
-            elif context.direction_bias in ("bearish", "short"):
+            elif context.direction_bias == "short" and decision.action != "hold":
                 direction = "short"
 
             # Execute

@@ -74,7 +74,8 @@ class MomentumState:
     acceleration: float = 0.0
     rsi: float = 50.0
     macd_norm: float = 0.0
-    squeeze_fired: bool = False
+    squeeze_fired: bool = False     # just exited compression (breakout signal)
+    squeeze_active: bool = False    # currently IN compression
 
     def to_dict(self): return asdict(self)
 
@@ -142,6 +143,7 @@ class MarketState:
     micro_1m: MicroState = field(default_factory=MicroState)
 
     ohlcv: dict = field(default_factory=dict)
+    source_ts: dict = field(default_factory=dict)  # {"1h": ts, "4h": ts, "15m": ts, "1m": ts}
 
     def to_dict(self):
         return {

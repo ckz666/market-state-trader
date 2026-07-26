@@ -126,7 +126,14 @@ def get_analysis_report():
     from analysis import full_report
     import io
     buf = io.StringIO()
-    full_report("data/candidates.json", file=buf)
+    # full_report writes to stdout; capture it
+    import sys
+    old_stdout = sys.stdout
+    sys.stdout = buf
+    try:
+        full_report("data/candidates.json")
+    finally:
+        sys.stdout = old_stdout
     return {"report": buf.getvalue()}
 
 
