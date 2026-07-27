@@ -1,6 +1,8 @@
 # Discovery v24 — state transitions: does origin matter?
 
-Generated 2026-07-27T06:00:38.834827+00:00.
+Generated 2026-07-27T06:05:56.793279+00:00.
+
+> **CORRECTION — read `discovery_v25_transition_overlap_check.md` alongside this report.** Section C's permutation test treats rows as exchangeable, which is valid at 15m and 1h but NOT at 4h: consecutive hourly candidates have 75% overlapping 4h forward windows, making the 4h null too narrow. Re-tested on four disjoint non-overlapping subsamples, the 4h result does not hold (percentiles 49.5 / 83.5 / 93.5 / 85.0, none above 95). **The surviving claim is 15m only** — and that is the smallest of the three effects. The 4h numbers below are left unchanged as the record of what the uncorrected test produced.
 
 `context` was tested by discovery_v1 as a static categorical dimension; its transitions never were. The question here is not "which transition predicts returns" (25 transitions x 3 horizons = 75 cells invites cherry-picking) but whether `previous_context x current_context` carries information beyond `current_context` alone — with a permutation test to say what counts as more than chance. Purely descriptive; proposes no rule. Discovery only (2020-2025); 2026 untouched. Cells below n=100 are marked instead of reported.
 
