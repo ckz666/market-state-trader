@@ -1,5 +1,8 @@
 data/*
 !data/reports/
+# Frozen transform parameters — small, and essential for reproducibility:
+# live code loads these instead of re-fitting (see shadow/recorder.py).
+!data/frozen_params.json
 __pycache__/
 .env
 *.tmp

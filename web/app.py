@@ -116,6 +116,14 @@ def get_log(limit: int = 50):
     return list(reversed(trader.log[-limit:]))
 
 
+# ── Shadow recorder (research candidates, observation only) ──
+@app.get("/api/shadow")
+def get_shadow():
+    if not trader:
+        return {"ready": False, "load_error": "trader not started"}
+    return trader.shadow.status()
+
+
 # ── Analysis (Phase 2) ──
 @app.get("/api/analysis")
 def get_analysis():

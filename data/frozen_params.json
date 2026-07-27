@@ -1,0 +1,31 @@
+{
+  "fitted_on": {
+    "source": "data/historical_candidates.json",
+    "cutoff": "2026-01-01",
+    "n_rows": 52608
+  },
+  "generated": "2026-07-27T06:28:02.159674+00:00",
+  "lpl": {
+    "bb_mean": 0.5137504900001902,
+    "bb_std": 0.3349131972243989,
+    "vwap_mean": 0.0006319633048519987,
+    "vwap_std": 0.017120439232251167
+  },
+  "lpl_quintile_edges": [
+    -Infinity,
+    -0.7620660133169911,
+    -0.23541027267880438,
+    0.27077326260056006,
+    0.7690094232467013,
+    Infinity
+  ],
+  "vol_quintile_edges": [
+    -Infinity,
+    0.00492,
+    0.00663,
+    0.00834,
+    0.01107,
+    Infinity
+  ],
+  "note": "Frozen 2020-2025. Live code MUST load these rather than re-fitting, or every OOS comparison silently breaks."
+}

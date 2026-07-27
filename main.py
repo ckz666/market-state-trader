@@ -17,6 +17,7 @@ from context import classify
 from strategy import decide
 from paper import PaperTrader
 from storage import CandidateLogger, Candidate
+from shadow import ShadowRecorder
 import mst_config as config
 
 
@@ -24,6 +25,10 @@ class MarketStateTrader:
     def __init__(self):
         self.paper = PaperTrader()
         self.logger = CandidateLogger()
+        # Observation-only: runs the RESEARCH rules (decision_rule_v1 + the
+        # 24h candidate) in parallel and captures the order book at each
+        # signal. Never trades. See shadow/recorder.py for why.
+        self.shadow = ShadowRecorder()
         self.running = False
         self.cycle_count = 0
         self.live_price = 0.0
@@ -113,6 +118,7 @@ class MarketStateTrader:
                 self._log("WARN", f"{outcomes['fresh_misses']} outcome(s) missed their exact target "
                                    f"time — no 1m price within {self.logger.OUTCOME_TOLERANCE_SEC}s tolerance")
             self.paper.record_equity(self.live_price)
+            self.shadow.on_price(self.live_price)  # observation only
 
             # Heartbeat: log every few cycles so the UI does not look dead
             if self.cycle_count <= 3 or self.cycle_count % 5 == 0:
@@ -198,6 +204,27 @@ class MarketStateTrader:
             self._log("INFO", f"1h candle closed @ ${state.ohlcv['close']:,.2f} (exec ${self.live_price:,.2f}) "
                                f"→ [{context.name.upper()}] {decision.action} conf={context.confidence:.2f}")
 
+            # ── Shadow: what would the RESEARCH candidates do? ──
+            # Fetches the book only when a signal actually fires, so the
+            # cost is one extra call on ~2% of candles.
+            try:
+                cls = self.shadow.classify(state)
+                book = None
+                if cls and cls["decision"] == "long_candidate":
+                    book = await client.fetch_order_book(config.SYMBOL, limit=200)
+                res = self.shadow.on_new_state(state, self.live_price, book)
+                if res and res["decision"] != "no_signal":
+                    extra = ""
+                    if res.get("opened"):
+                        extra = " → shadow 24h position OPENED"
+                    elif res.get("skipped_option_a"):
+                        extra = " → skipped (Option A: shadow position already open)"
+                    self._log("SHADOW", f"{res['decision']} "
+                                        f"(LPL={res['lpl_q']} {res['lpl']:+.3f}, "
+                                        f"Vol={res['vol_q']} {res['vol']:.5f}){extra}")
+            except Exception as e:
+                self._log("WARN", f"Shadow recorder: {e}")
+
         except Exception as e:
             self._log("ERROR", f"Cycle: {e}")
             import traceback; traceback.print_exc()
@@ -236,4 +263,5 @@ class MarketStateTrader:
             "candidates": self.logger.summary(),
             "trade_history": self.paper.trade_history[-20:],
             "ohlcv": self.ohlcv_cache,
+            "shadow": self.shadow.status(),
         }

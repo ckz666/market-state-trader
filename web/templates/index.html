@@ -132,6 +132,24 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .tf-btn.active{background:var(--accent);color:#1a1000}
 .tf-btn:hover:not(.active){color:var(--text);transform:none}
 
+/* ── Shadow / research candidates ── */
+.ph-r{background:rgba(247,147,26,.22);color:var(--accent)}
+.shadow-banner{background:rgba(247,147,26,.07);border:1px solid rgba(247,147,26,.25);border-radius:8px;
+  padding:6px 9px;margin-bottom:7px;font-size:.66rem;color:var(--muted);line-height:1.5}
+.shadow-banner b{color:var(--accent2)}
+.spos{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:7px 9px;margin-bottom:5px}
+.spos.deep{border-color:rgba(248,113,113,.45)}
+.spos-head{display:flex;align-items:center;gap:7px;margin-bottom:4px;flex-wrap:wrap}
+.spos-head .big{font-family:var(--mono);font-size:.95rem;font-weight:700}
+.tag{font-size:.55rem;font-weight:800;padding:1px 5px;border-radius:4px;text-transform:uppercase;letter-spacing:.03em}
+.tag.ok{background:rgba(52,211,153,.18);color:var(--green)}
+.tag.warn{background:rgba(251,191,36,.18);color:var(--yellow)}
+.tag.bad{background:rgba(248,113,113,.18);color:var(--red)}
+.tag.n{background:var(--card2);color:var(--muted);border:1px solid var(--border)}
+.bar{height:4px;background:var(--card2);border-radius:99px;overflow:hidden;margin-top:5px}
+.bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+.log .SHADOW{color:var(--accent2);font-weight:600}
+
 @media (max-width:520px){
   .topbar{flex-wrap:wrap}
   .price{font-size:1.6rem}
@@ -218,6 +236,23 @@ tr:hover td{background:rgba(255,255,255,.02)}
     </h2>
     <div id="position-info">--</div>
   </div>
+</div>
+
+<div class="section-bar"><span style="background:rgba(247,147,26,.14);color:var(--accent);border-color:rgba(247,147,26,.3)">Research candidates · observation only</span></div>
+
+<div class="card" style="margin-bottom:8px">
+  <h2><span class="ph-badge ph-r">R</span> Shadow Recorder
+    <span class="hint" data-tip="Runs the RESEARCH rules (decision_rule_v1 entry + 24h hold) in parallel with the paper trader, without trading. Its purpose is to capture the live order book at the moment a signal fires — the one open question the offline backtests cannot answer.">?</span>
+    <span id="shadow-state" class="tag n" style="margin-left:auto">--</span>
+  </h2>
+  <div class="shadow-banner">
+    Observes <b>decision_rule_v1</b> (LPL=Q1 &amp; Vol=Q5) with a <b>24h hold</b> (decision_rule_v4, the best candidate: OOS PF 1.575 on n=16).
+    Records the order book at each signal to measure <b>slippage under the volatility conditions the strategy actually trades</b> —
+    the largest unresolved caveat in the research. Phase D recovery-state is tracked but never acted on, so the 24h outcome stays comparable to the backtests.
+  </div>
+  <div id="shadow-summary"></div>
+  <div id="shadow-open" style="margin-top:6px"></div>
+  <div id="shadow-closed" style="margin-top:6px;max-height:150px;overflow-y:auto"></div>
 </div>
 
 <div class="card" style="margin-top:8px">
@@ -324,6 +359,8 @@ function render(s){
   });
   if(trades.length)th+='</table>';
   document.getElementById('trade-history').innerHTML=th||'<div class="muted">No trades yet</div>';
+
+  renderShadow(s.shadow);
 
   renderState(s.state);
   fetch('/api/log?limit=30').then(r=>r.json()).then(entries=>{
@@ -432,6 +469,65 @@ function chartLeave(){_hoverIdx=null;drawChart();}
   cvs.addEventListener('mouseleave',chartLeave);
   cvs.addEventListener('touchmove',chartHover,{passive:true});
 })();
+
+function renderShadow(sh){
+  const stEl=document.getElementById('shadow-state');
+  if(!sh){stEl.className='tag n';stEl.textContent='n/a';return}
+  if(!sh.ready){
+    stEl.className='tag bad';stEl.textContent='not ready';
+    document.getElementById('shadow-summary').innerHTML=
+      '<div class="muted" style="font-size:.7rem">Frozen params missing — run <code>scripts/export_frozen_params.py</code>.'+
+      (sh.load_error?'<br>'+sh.load_error:'')+'</div>';
+    return;
+  }
+  stEl.className='tag ok';stEl.textContent='armed';
+
+  const q=sh.summary||{};
+  document.getElementById('shadow-summary').innerHTML=`
+    <div class="row"><span class="lbl">Signals seen<span class="hint" data-tip="Times decision_rule_v1 fired. Some are skipped by Option A while a shadow position is already open.">?</span></span><span class="val">${sh.signals_seen}</span></div>
+    <div class="row"><span class="lbl">Open / settled</span><span class="val">${sh.open_count} / ${sh.closed_count}</span></div>
+    <div class="row"><span class="lbl">Median 24h return<span class="hint" data-tip="Live shadow result. Discovery reference: +0.4983% incl. funding. Needs ~30-40 settled trades to mean anything.">?</span></span><span class="val ${q.median_24h_pct==null?'muted':cls(q.median_24h_pct)}">${q.median_24h_pct==null?'--':fmtPct(q.median_24h_pct,4)}</span></div>
+    <div class="row"><span class="lbl">Win rate</span><span class="val">${q.win_rate==null?'--':q.win_rate+'%'}</span></div>
+    <div class="row"><span class="lbl">Mean entry spread<span class="hint" data-tip="THE key number. Slippage was measured at 0.02 bps in a calm market, but the strategy only fires at Vol=Q5 when spreads widen. This measures it when it actually matters.">?</span></span><span class="val ${q.mean_entry_spread_bps==null?'muted':''}">${q.mean_entry_spread_bps==null?'--':q.mean_entry_spread_bps.toFixed(3)+' bps'}</span></div>`;
+
+  const now=Date.now();
+  document.getElementById('shadow-open').innerHTML = !sh.open.length
+    ? '<div class="muted" style="font-size:.7rem">No open shadow position — waiting for LPL=Q1 &amp; Vol=Q5.</div>'
+    : sh.open.map(p=>{
+        const due=new Date(p.exit_due_ts).getTime(), ent=new Date(p.entry_ts).getTime();
+        const pct=Math.min(100,Math.max(0,(now-ent)/(due-ent)*100));
+        const left=Math.max(0,(due-now)/3600000);
+        const tags=[];
+        if(p.currently_deep) tags.push('<span class="tag bad">deep</span>');
+        if(p.deep_episodes_count) tags.push(`<span class="tag n">${p.deep_episodes_count} episode${p.deep_episodes_count>1?'s':''}</span>`);
+        if(p.recovery_timeout_would_fire_ts) tags.push('<span class="tag warn" title="Phase D Action Class II would have exited here — recorded only, not acted on">timeout would fire</span>');
+        return `<div class="spos${p.currently_deep?' deep':''}">
+          <div class="spos-head">
+            <span class="big ${cls(p.unrealized_pct)}">${fmtPct(p.unrealized_pct,3)}</span>
+            <span class="muted" style="font-size:.66rem">entry ${fmt$(p.entry_price)}</span>
+            ${tags.join('')}
+            <span class="muted" style="font-size:.62rem;margin-left:auto">${left.toFixed(1)}h left</span>
+          </div>
+          <div class="row"><span class="lbl">MAE / MFE so far</span><span class="val"><span class="red">${fmtPct(p.mae_so_far_pct,3)}</span> / <span class="green">${fmtPct(p.mfe_so_far_pct,3)}</span></span></div>
+          <div class="row"><span class="lbl">4h baseline (v1)</span><span class="val ${p.baseline_4h_return_pct==null?'muted':cls(p.baseline_4h_return_pct)}">${p.baseline_4h_return_pct==null?'pending':fmtPct(p.baseline_4h_return_pct,3)}</span></div>
+          <div class="row"><span class="lbl">Entry spread / slip 10k</span><span class="val">${p.entry_spread_bps==null?'--':p.entry_spread_bps.toFixed(3)+' bps'} / ${p.entry_slippage_bps&&p.entry_slippage_bps['10000']!=null?p.entry_slippage_bps['10000'].toFixed(3)+' bps':'--'}</span></div>
+          <div class="row"><span class="lbl">LPL / Vol at entry</span><span class="val">${fmtNum(p.lpl_value,3)} ${p.lpl_quintile} / ${fmtNum(p.vol_value,5)} ${p.vol_quintile}</span></div>
+          <div class="bar"><i style="width:${pct}%"></i></div>
+        </div>`;
+      }).join('');
+
+  const c=sh.recent_closed||[];
+  document.getElementById('shadow-closed').innerHTML = !c.length ? '' :
+    '<table><tr><th>Signal</th><th>24h</th><th>4h (v1)</th><th>MAE</th><th>Spread</th><th>Phase D</th></tr>'+
+    c.map(p=>`<tr>
+      <td class="muted">${p.signal_ts.slice(5,16).replace('T',' ')}</td>
+      <td class="${cls(p.gross_return_pct)}">${fmtPct(p.gross_return_pct,3)}</td>
+      <td class="${p.baseline_4h_return_pct==null?'muted':cls(p.baseline_4h_return_pct)}">${p.baseline_4h_return_pct==null?'--':fmtPct(p.baseline_4h_return_pct,3)}</td>
+      <td class="red">${fmtPct(p.mae_so_far_pct,2)}</td>
+      <td>${p.entry_spread_bps==null?'--':p.entry_spread_bps.toFixed(2)}</td>
+      <td class="muted">${p.recovery_timeout_would_fire_ts?'would exit':'held'}</td>
+    </tr>`).join('')+'</table>';
+}
 
 function renderState(st){
   if(!st)return;
