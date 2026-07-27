@@ -88,3 +88,61 @@ own `MIN_CELL_N` in most contexts. Therefore:
 - No re-tuning of the quintile cut based on the OOS result. One frozen
   filter, one OOS run, honest result — regardless of outcome.
 - Not combined with Phase D position-management logic (separate question).
+
+## 6. OOS result and classification (2026-07-27)
+
+`decision_rule_v3_micro_return_filter_oos_v1.py`, one unmodified run.
+
+**Trade level** (Option A de-duplicated, fees/slippage — the real result;
+n=24, above the pre-registered n>=15 bar, so NOT directional-only):
+
+| Population | n | Win rate | Median | Mean | P05 | Profit factor |
+|---|---|---|---|---|---|---|
+| Baseline (all decision_rule_v1 trades) | 39 | 51.3% | +0.1787% | -0.0893% | -3.09% | 0.868 |
+| **Filtered (+ micro_return_5m == Q1)** | **24** | **54.2%** | **+0.3772%** | **+0.3037%** | **-1.52%** | **1.565** |
+
+Every pre-registered primary metric improves. Mean flips from negative to
+positive; profit factor goes from below 1 to well above; P05 (tail)
+improves substantially. On its own this is the best OOS result any
+candidate rule has produced in this project.
+
+**Candidate level** (all `long_candidate` signals, n=45 — higher sample,
+but overlapping 4h windows, so not a tradeable sequence):
+
+| Population | n | Win rate | Median | Mean | Profit factor |
+|---|---|---|---|---|---|
+| Baseline | 113 | 59.3% | +0.3110% | +0.0813% | 1.122 |
+| Filtered | 45 | 57.8% | +0.3110% | -0.0301% | 0.965 |
+
+**This does not corroborate the trade-level result — it mildly
+contradicts it.** Win rate falls slightly, median is identical to four
+decimal places, profit factor falls below 1.
+
+**Classification: B — promising but not established.** Not A, despite
+the trade-level numbers meeting §4's letter, because:
+
+- The two views disagree, and the *disagreeing* one has nearly twice the
+  sample (45 vs. 24). A real entry-selection edge should show up in both;
+  a filter that only helps after Option-A de-duplication is suspicious,
+  because de-duplication changes *which* trades get taken, not just how
+  many. With 39 baseline trades total, the filter's 24 trades are a
+  different, sparser sequence — several of the excluded ones were
+  overlapping-window duplicates that the baseline had to skip anyway.
+  Which specific 24 trades survive is partly an artifact of signal
+  timing, and at this n a handful of them drive the entire result.
+- n=24 clears the pre-registered bar but is still small in absolute
+  terms. The single preceding attempt (`decision_rule_v2`) is a direct
+  warning: it looked excellent on 735 Discovery trades and was refuted
+  on 34 OOS trades.
+
+**Decision: `decision_rule_v1` stays unchanged for now.** Not adopted,
+not refuted, not re-tuned. Per §5, no second OOS attempt and no
+threshold search follows from this.
+
+**What would settle it:** more out-of-sample data, specifically at the
+trade level. The live paper-trading service continues collecting; the
+natural re-evaluation trigger is roughly 40-60 filtered trades (vs.
+today's 24), at which point the trade-level and candidate-level views
+should either converge or the discrepancy should become interpretable.
+Until then this is the strongest open candidate in the project, and
+explicitly not a validated one.
