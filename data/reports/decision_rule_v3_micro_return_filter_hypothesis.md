@@ -146,3 +146,49 @@ today's 24), at which point the trade-level and candidate-level views
 should either converge or the discrepancy should become interpretable.
 Until then this is the strongest open candidate in the project, and
 explicitly not a validated one.
+
+## 7. Downgraded to C after discovery_v16 (2026-07-27)
+
+§6 said the discrepancy "is not resolved by this run" and that more data
+would settle it. It turned out the question was answerable immediately,
+on Discovery data, without waiting — `discovery_v16` did exactly that,
+reproducing both views at ~40x the sample (1,064 trades / 3,276
+candidates).
+
+**The discrepancy is systematic, not small-sample noise — but its
+direction is unstable, which is worse for this candidate than either
+explanation §6 considered:**
+
+| View | Discovery (n=1,064 / 3,276) | 2026 OOS (n=24 / 45) |
+|---|---|---|
+| Trade level | filter **hurts** (win −0.72pp, median −0.021pp) | filter helps strongly |
+| Candidate level | filter **helps** (win +1.38pp, median +0.080pp) | filter mildly hurts |
+
+The two periods disagree in *opposite* directions on both views. A filter
+whose apparent benefit flips sign depending on which period and which
+view you look at is not a stable edge — the favourable 2026 trade-level
+numbers in §6 were, on this evidence, luck at n=24.
+
+**Mechanism found (`discovery_v16` §B):** Option A signal-to-trade
+retention rises from **32.5% (baseline) to 55.1% (filtered)**. Filtering
+thins the signal stream, so far fewer signals are blocked by an
+already-open position. **The filtered trade set is therefore not a subset
+of the baseline trade set — it is a different, sparser entry sequence
+altogether.** That is why the two views can disagree at all, and why
+comparing them naively is misleading. (A milder secondary effect: 15.9%
+of filtered signals sit at cluster position 0 vs. 11.3% of non-filtered.)
+
+**Revised classification: C — not supported.** `decision_rule_v1` stays
+unchanged. Per §5, no re-tuning and no further attempt on this
+hypothesis. The underlying *factor* `micro_return_5m` remains a real,
+OOS-validated, artifact-checked finding (discovery_v10-v15) — what fails
+here is specifically its use as a Q1 entry filter on top of
+`decision_rule_v1`, which is a narrower claim.
+
+**Methodological note worth carrying forward:** trade-level and
+candidate-level results are not two views of one thing. Under Option A
+logic, changing the *signal* set changes the *trade* set
+non-proportionally. Any future entry-filter candidate must be judged
+against a baseline evaluated the same way, and a filter that improves
+only one view should be treated as unproven until the mechanism is
+understood.
