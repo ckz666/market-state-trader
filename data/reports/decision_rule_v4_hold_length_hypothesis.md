@@ -89,3 +89,51 @@ rather than resolved in the candidate's favour.
   testing of holds beyond 1440m after seeing 2026. One frozen value, one
   run.
 - Not combined with Phase D position management or any entry filter.
+
+## 6. OOS result and classification (2026-07-27)
+
+| Hold | n | Win rate | Net median | Mean | P05 | Profit factor | Max DD |
+|---|---|---|---|---|---|---|---|
+| 240m (baseline) | 39 | 51.3% | +0.1787% | -0.0893% | -3.09% | 0.868 | -15.36% |
+| **1440m (candidate)** | **16** | **56.2%** | **+1.3137%** | **+0.7982%** | -5.51% | **1.575** | **-12.34%** |
+
+**Pre-registered direction check — all three primary metrics agree:**
+
+| Metric | Discovery (4h→24h) | OOS (4h→24h) | Same direction? |
+|---|---|---|---|
+| Win rate | +5.00pp | +4.97pp | yes |
+| Net median | +0.47pp | +1.14pp | yes |
+| Profit factor | +0.402 | +0.707 | yes |
+
+**Classification: A — confirmed, with the sample-size caveat below.**
+
+This is the first candidate in the project to pass this check. The
+failure mode that killed `decision_rule_v3` (direction flipping between
+periods/views) does not occur, and the win-rate agreement is unusually
+tight: +5.00pp on 1,064 Discovery trades vs. +4.97pp on 16 OOS trades,
+which the pre-registration did not require and which is hard to produce
+by chance.
+
+**Why "A with a caveat" and not adoption:**
+
+- **n=16** clears the pre-registered n≥15 bar by one trade. That bar
+  was set in advance and is being honoured rather than moved, but 16
+  trades is 16 trades — a handful of them drive the median.
+- **P05 worsens** (-3.09% → -5.51%), as Discovery predicted. This is a
+  risk-for-return trade, not a free improvement. Max drawdown improves
+  (-15.36% → -12.34%), so the two risk measures disagree; at n=16 the
+  drawdown figure is especially unreliable.
+- **§0's concern stands.** 1440m was the largest value tested. This
+  result supports "longer than 4h helps", which is what §0 said the
+  claim should be limited to. It does not establish 24h as correct, and
+  no further hold lengths may be tested off the back of this result
+  (§5).
+- Two prior candidates looked good before failing. One passing OOS run
+  at n=16 is evidence, not proof.
+
+**Decision: `decision_rule_v1` stays unchanged for now.** Not adopted on
+a single n=16 run. This is the strongest open candidate the project has
+produced and the first with a genuine OOS pass — it should be
+re-evaluated once roughly 30-40 OOS trades at 24h have accumulated,
+which the live paper-trading service will supply over time. Nothing is
+re-tuned in the meantime.
