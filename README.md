@@ -7,10 +7,20 @@ and logs it together with its *exact* forward returns (15m/30m/1h/4h) so
 that later analysis can ask: **which state dimensions actually predict
 what happens next?**
 
-It also runs a paper-trading loop on top of the same classification (no
-real orders, no real capital), mostly to have a second, execution-facing
-view of the same signal — but the primary deliverable right now is the
-labeled dataset, not the paper P&L.
+**Der Paper-Trader ist am 2026-07-28 ausgezogen** — er liegt jetzt in
+[`ckz666/regime-trader`](https://github.com/ckz666/regime-trader). Was hier
+bleibt, ist ausschliesslich Erhebung und Auswertung: der beschriftete
+Datensatz und die Forschung darauf.
+
+Der Auszug hatte einen inhaltlichen Grund, nicht nur einen ordnenden.
+`decide()` nimmt `has_open_position`; `scripts/backfill.py` uebergibt dort
+**immer** `False`, alle 57.565 historischen Kandidaten sind also
+positionsfrei erzeugt. Der alte Live-Loop reichte dagegen den echten
+Paper-Zustand durch und produzierte damit `close_*`-Entscheidungen, die im
+Forschungsdatensatz gar nicht vorkommen koennen (live 1x `close_short` bei
+48 Zeilen, historisch 0 von 57.565). `research_loop.py` ruft `decide()`
+positionsfrei wie der Backfill — live und historisch sind damit wieder
+dieselbe Messung.
 
 ```
 1m / 15m / 1h / 4h OHLCV  (Bitget, via ccxt)
@@ -38,10 +48,9 @@ labeled dataset, not the paper P&L.
 | Indicators | `indicators/*.py` | RSI/MACD/ADX/BB/ATR/squeeze/cycle-strength/vol-regime feature computation used by the compiler |
 | Context | `context/classifier.py` | Rule-based classification of a `MarketState` into `continuation` \| `mean_reversion` \| `extended` \| `compressed` \| `transition` |
 | Strategy | `strategy/decision.py` | Per-context rule → `TradingDecision` (open/close/hold). Confidence is passed straight through from the context classifier, not independently computed. |
-| Paper trading | `paper/engine.py` | Simulated position/PnL/SL-TP tracking, no real orders |
 | Storage | `storage/logger.py` | Persists one `Candidate` per closed 1h candle + its forward returns |
-| Web | `web/app.py`, `web/templates/index.html` | FastAPI + WebSocket live dashboard: candlestick chart, market-state panel, context/decision, portfolio, event log |
-| Orchestration | `main.py` | The async loop tying it all together |
+| Shadow | `shadow/recorder.py` | Laesst die eingefrorenen Forschungsregeln live mitlaufen, rein beobachtend, mit Orderbuch-Schnappschuss je Signal |
+| Orchestration | `research_loop.py` | Der async-Loop: sammelt Kandidaten + Forward-Returns und treibt den Shadow Recorder. Handelt nicht. |
 
 ## Timing model
 
@@ -129,25 +138,34 @@ BITGET_PASSPHRASE=...
 
 ### As a systemd service (recommended — survives reboots/crashes)
 
-Installed at `/etc/systemd/system/market-state-trader.service`:
+Installiert als `/etc/systemd/system/mst-research.service` (Vorlage im Repo
+unter `deploy_mst-research.service`):
 
 ```ini
 [Unit]
-Description=Market State Trader Web UI + Paper Trading Loop
-After=network.target
+Description=Market State Trader — Forschungs-Datensammlung (Kandidaten + Shadow Recorder)
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=/root/projekte/market-state-trader
-ExecStart=/root/projekte/market-state-trader/.venv/bin/uvicorn web.app:app --host 0.0.0.0 --port 8081
-Restart=on-failure
-RestartSec=5
+EnvironmentFile=/root/projekte/market-state-trader/.env
+ExecStart=/root/projekte/market-state-trader/.venv/bin/python research_loop.py
+Restart=always
+RestartSec=15
 Environment=PYTHONUNBUFFERED=1
+StandardOutput=append:/root/projekte/market-state-trader/data/research_loop.log
+StandardError=append:/root/projekte/market-state-trader/data/research_loop.log
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+`Restart=always`, nicht `on-failure`: die Datensammlung ist nicht nachholbar,
+ein Absturz darf sie nicht dauerhaft stilllegen. Der Loop ist zustandslos — er
+stellt den letzten Kandidaten-Zeitstempel beim Start aus der Datei wieder her.
 
 ```bash
 systemctl status market-state-trader     # is it up?
@@ -158,18 +176,18 @@ systemctl restart market-state-trader    # apply a code change (picks up
                                           # no restart needed for UI-only edits)
 ```
 
-Starting the web server does **not** start the collection loop by itself —
-either click ▶ Start in the UI, or:
+Der Loop laeuft als Dienst und startet mit ihm — es gibt keinen
+Start-Knopf und keine HTTP-API mehr, seit die Handelsseite ausgezogen ist:
 
 ```bash
-curl -X POST localhost:8081/api/start                 # default 60s cycle
-curl -X POST localhost:8081/api/start -d '{"interval":30}' -H 'Content-Type: application/json'
-curl -X POST localhost:8081/api/stop
-curl localhost:8081/api/status                         # full current state/context/decision/portfolio
-curl localhost:8081/api/log?limit=30                    # recent event log
-curl localhost:8081/api/candidates?limit=50             # recent candidates + summary stats
-curl localhost:8081/api/analysis                        # per-context win-rate/expectancy (analysis/report.py)
+systemctl status mst-research
+tail -f data/research_loop.log
+python3 -c "import json;d=json.load(open('data/candidates.json'));print(len(d))"
+python3 -c "import json;d=json.load(open('data/shadow_signals.json'));print(len(d))"
 ```
+
+Der Stand des Shadow Recorders steht in `data/shadow_signals.json` — das
+ist die Quelle der Wahrheit, nicht mehr ein `/api/shadow`-Endpunkt.
 
 ## Backfill: months of history in minutes
 
@@ -202,16 +220,6 @@ Per-timeframe OHLCV is cached to CSV under `data/backfill_cache/` so
 re-running with a wider range doesn't re-fetch already-covered history.
 1m history depth on Bitget goes back at least to January 2025 (tested);
 the true earliest boundary for this symbol wasn't determined further back.
-
-## Web UI
-
-Dark dashboard at `http://<host>:8081`: live BTC/USDT candlestick chart
-(hover for an OHLC crosshair readout, switchable 1m/15m/1h/4h), the full
-`MarketState` breakdown, current context classification with rationale,
-trading decision, paper portfolio/position, trade history, and a live
-event log. Every card header carries a hover tooltip ("?") explaining
-what the numbers mean and where they come from — most useful on the
-Market State panel (BB %B anchoring, ADX trending threshold, etc.).
 
 ## Status: data-collection phase
 

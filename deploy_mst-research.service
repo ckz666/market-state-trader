@@ -1,0 +1,24 @@
+[Unit]
+Description=Market State Trader — Forschungs-Datensammlung (Kandidaten + Shadow Recorder)
+Documentation=file:///root/projekte/market-state-trader/research_loop.py
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/projekte/market-state-trader
+EnvironmentFile=/root/projekte/market-state-trader/.env
+ExecStart=/root/projekte/market-state-trader/.venv/bin/python research_loop.py
+# Der Loop ist zustandslos: er stellt den letzten Kandidaten-Zeitstempel beim
+# Start aus der persistierten Datei wieder her und macht dort weiter. Ein
+# Neustart kostet deshalb nichts — und ein Absturz darf die Datensammlung
+# nicht dauerhaft stilllegen, weil die Zeit nicht nachholbar ist.
+Restart=always
+RestartSec=15
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=append:/root/projekte/market-state-trader/data/research_loop.log
+StandardError=append:/root/projekte/market-state-trader/data/research_loop.log
+
+[Install]
+WantedBy=multi-user.target

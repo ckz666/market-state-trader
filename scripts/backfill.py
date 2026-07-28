@@ -1,7 +1,7 @@
 """
 Backfill — reconstructs historical MarketState candidates over a past date
 range, using the exact same compile/classify/decide code path the live
-collector (main.py) uses, plus exact-target-time forward returns computed
+collector (research_loop.py) uses, plus exact-target-time forward returns computed
 from already-known historical 1m data (no waiting).
 
     "Wie sah der Market State zu diesem Zeitpunkt aus und was passierte
@@ -39,7 +39,7 @@ from strategy import decide
 from storage import CandidateLogger, Candidate
 import mst_config as config
 
-# Mirrors main.py's live fetch_ohlcv(..., limit=N) exactly — every backfilled
+# Mirrors research_loop.py's live fetch_ohlcv(..., limit=N) exactly — every backfilled
 # candidate sees the SAME bounded trailing window a live cycle would have
 # seen, not the full cumulative history (which would both diverge from live
 # behavior and make get_indicators()'s pattern-scan O(n^2) over the backfill).
@@ -217,7 +217,7 @@ async def run(start_dt: datetime, end_dt: datetime, symbol: str, out_path: str,
 
     hours = list(pd.date_range(start_dt.replace(minute=0, second=0, microsecond=0), end_dt, freq="1h"))
     # Indicators like ADX (window=14) crash outright on too-short input rather
-    # than returning NaN. Live never hits this (main.py always fetches a full
+    # than returning NaN. Live never hits this (research_loop.py always fetches a full
     # window from an exchange with years of prior history) — but the very
     # first hours after --start, if --start is at/near the true beginning of
     # available exchange history, genuinely can't have a full lead-in yet.

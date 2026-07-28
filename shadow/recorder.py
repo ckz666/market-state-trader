@@ -147,7 +147,7 @@ class ShadowRecorder:
             decision = "avoid_long"
         return {"lpl": lpl, "lpl_q": lpl_q, "vol": vol, "vol_q": vol_q, "decision": decision}
 
-    # ── the two hooks main.py calls ──────────────────────────────────
+    # ── the two hooks research_loop.py calls ──────────────────────────────────
     def on_new_state(self, state, live_price: float, order_book: dict | None) -> dict | None:
         """Called once per closed 1h candle. Opens a shadow position on a
         long_candidate. Option A: skipped while one is already open."""
